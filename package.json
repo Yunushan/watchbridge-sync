@@ -7,9 +7,9 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @watchbridge/api dev & pnpm --filter @watchbridge/web dev",
-    "build": "pnpm -r build",
+    "build": "pnpm -r --sort build",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint",
+    "lint": "pnpm build && pnpm -r --sort lint",
     "format": "prettier -w .",
     "check": "pnpm lint && pnpm test && pnpm build"
   },
