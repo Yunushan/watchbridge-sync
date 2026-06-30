@@ -2,6 +2,7 @@ node_modules/
 dist/
 build/
 coverage/
+watchbridge-sync/
 .env
 .env.*
 !.env.example
