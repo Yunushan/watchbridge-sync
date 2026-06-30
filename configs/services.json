@@ -1,0 +1,38 @@
+{
+  "services": [
+    "imdb",
+    "rotten-tomatoes",
+    "letterboxd",
+    "tmdb",
+    "tv-time",
+    "trakt",
+    "simkl",
+    "metacritic",
+    "justwatch",
+    "reelgood",
+    "serializd",
+    "thetvdb",
+    "tvmaze",
+    "allmovie",
+    "criticker",
+    "movielens",
+    "filmaffinity",
+    "flickchart",
+    "tastedive",
+    "tasteio",
+    "mubi",
+    "common-sense-media",
+    "myanimelist",
+    "anilist",
+    "douban-movie",
+    "kinopoisk"
+  ],
+  "defaultSyncPolicy": {
+    "dryRun": true,
+    "createBackupBeforeWrite": true,
+    "requireUserConfirmationForDeletes": true,
+    "useOfficialApisOnly": true,
+    "allowBrowserAutomation": false,
+    "allowScraping": false
+  }
+}

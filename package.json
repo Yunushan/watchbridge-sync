@@ -1,0 +1,27 @@
+{
+  "name": "watchbridge-sync",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Free/open-source media data export, import, and sync workspace for IMDb, Letterboxd, TMDb, Trakt, Simkl, TV trackers and more.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @watchbridge/api dev & pnpm --filter @watchbridge/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "format": "prettier -w .",
+    "check": "pnpm lint && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "prettier": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

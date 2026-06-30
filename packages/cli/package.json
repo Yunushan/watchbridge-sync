@@ -1,0 +1,21 @@
+{
+  "name": "@watchbridge/cli",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "watchbridge": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "echo 'No CLI tests yet'",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@watchbridge/core": "workspace:*",
+    "@watchbridge/connectors": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  }
+}
