@@ -17,11 +17,20 @@ export const DEFAULT_SERVICE_SCALES: Partial<Record<ServiceId, RatingScale>> = {
   tmdb: RATING_SCALES.tmdb10,
   trakt: RATING_SCALES.trakt10,
   simkl: RATING_SCALES.simkl10,
+  movielens: RATING_SCALES.letterboxd5Half,
   myanimelist: RATING_SCALES.mal10,
   anilist: RATING_SCALES.anilist100,
   metacritic: RATING_SCALES.percent100,
   'rotten-tomatoes': RATING_SCALES.percent100
 };
+
+export function getDefaultServiceScale(service: ServiceId): RatingScale | undefined {
+  return DEFAULT_SERVICE_SCALES[service];
+}
+
+export function canConvertRatingBetweenServices(source: ServiceId, target: ServiceId): boolean {
+  return Boolean(getDefaultServiceScale(source) && getDefaultServiceScale(target));
+}
 
 export interface RatingConversionResult {
   input: number;
@@ -77,8 +86,8 @@ export function convertBetweenServices(value: number, source: ServiceId, target:
   if (source === 'letterboxd' && target === 'imdb') {
     return letterboxdToImdb(value);
   }
-  const sourceScale = DEFAULT_SERVICE_SCALES[source];
-  const targetScale = DEFAULT_SERVICE_SCALES[target];
+  const sourceScale = getDefaultServiceScale(source);
+  const targetScale = getDefaultServiceScale(target);
   if (!sourceScale || !targetScale) {
     throw new Error(`No default rating scale configured for ${source} -> ${target}`);
   }

@@ -4,3 +4,8 @@ export * from './imdbCsv.js';
 export * from './tmdb.js';
 export * from './trakt.js';
 export * from './simkl.js';
+export * from './myanimelist.js';
+export * from './tvmaze.js';
+export * from './tastedive.js';
+export * from './movielensCsv.js';
+export * from './mappedCsv.js';

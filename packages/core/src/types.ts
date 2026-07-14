@@ -40,6 +40,7 @@ export interface ExternalIds {
   anilist?: number;
   douban?: string;
   kinopoisk?: string;
+  movielens?: number;
   letterboxdSlug?: string;
 }
 

@@ -56,7 +56,8 @@ pnpm --filter @watchbridge/cli build
 - Connector capability registry that marks what each service can safely read, write, import, export, or handle manually.
 - Rating conversion engine, including Letterboxd half-star ratings to IMDb 1-10 output.
 - Sync planner that blocks unsupported operations and explains safe alternatives.
-- CSV import/export primitives for user-owned backup and transfer files.
+- Tested official API connectors for TMDb, Trakt, Simkl, and MyAnimeList, plus dedicated IMDb, Letterboxd, and MovieLens file workflows.
+- Configurable CSV import for user-owned exports from manual/export-only services, without scraping or browser automation.
 - API, web, CLI, desktop, and mobile workspace structure.
 - CI workflow for install, lint, test, and build validation.
 - Full README support in English, Turkish, French, and German.
@@ -79,7 +80,7 @@ WatchBridge Sync is designed around connector capabilities for:
 | Serializd | Taste.io |  |
 | MUBI | Common Sense Media |  |
 
-Support level depends on each service's official API, account export, account import, partner access, and terms. See [docs/CONNECTOR_CAPABILITIES.md](docs/CONNECTOR_CAPABILITIES.md).
+All 26 services are selectable. Account-level sync is currently available for TMDb, Trakt, Simkl, and MyAnimeList; file and metadata-only workflows are clearly labeled. Support depends on each service's official API, account export, account import, partner access, and terms. See [docs/CONNECTOR_CAPABILITIES.md](docs/CONNECTOR_CAPABILITIES.md) and [Manual CSV Import](docs/MANUAL_CSV_IMPORT.md).
 
 ## Rating Example
 
@@ -118,7 +119,7 @@ apps/api                  Node API server for OAuth callbacks and sync jobs
 apps/desktop              Desktop packaging notes
 apps/mobile               Android/iOS packaging notes
 packages/core             Canonical model, rating conversion, sync planner
-packages/connectors       Service adapter interfaces and connector stubs
+packages/connectors       Service adapters, official API connectors, and safe file workflows
 packages/cli              Command-line interface for import/export/sync
 configs                   Service registry, policies, and defaults
 docs                      Architecture, deployment, safety, and roadmap docs

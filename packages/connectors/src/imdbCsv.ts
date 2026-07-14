@@ -1,4 +1,4 @@
-import { toCsv, type CanonicalRating } from '@watchbridge/core';
+import { parseCsv, RATING_SCALES, toCsv, type CanonicalMediaItem, type CanonicalRating, type CanonicalWatchlistEntry } from '@watchbridge/core';
 import { convertBetweenServices } from '@watchbridge/core';
 
 export function createImdbRatingsImportCsv(ratings: CanonicalRating[]): string {
@@ -22,4 +22,38 @@ export function createImdbRatingsImportCsv(ratings: CanonicalRating[]): string {
       };
     })
   );
+}
+
+function itemFromRow(row: Record<string, string>): CanonicalMediaItem {
+  const imdb = row.Const || row['IMDb ID'];
+  const titleType = row.TitleType === 'tvSeries' || row.TitleType === 'tvMiniSeries' ? 'tv-show' : 'movie';
+  return {
+    id: imdb ? `imdb:${imdb}` : `imdb:${row.Title}:${row.Year}`,
+    kind: titleType,
+    title: row.Title,
+    year: row.Year ? Number(row.Year) : undefined,
+    externalIds: imdb ? { imdb } : {}
+  };
+}
+
+export function parseImdbRatingsCsv(csv: string): CanonicalRating[] {
+  return parseCsv(csv)
+    .filter((row) => row.Title && row.YourRating)
+    .map((row) => ({
+      item: itemFromRow(row),
+      sourceService: 'imdb' as const,
+      value: Number(row.YourRating),
+      scale: RATING_SCALES.imdb10,
+      ratedAt: row.DateRated || undefined
+    }));
+}
+
+export function parseImdbWatchlistCsv(csv: string): CanonicalWatchlistEntry[] {
+  return parseCsv(csv)
+    .filter((row) => row.Title)
+    .map((row) => ({
+      item: itemFromRow(row),
+      service: 'imdb' as const,
+      listedAt: row.Created || row.DateAdded || undefined
+    }));
 }

@@ -8,6 +8,17 @@ Capability levels:
 - **Manual**: project should generate backups/instructions but not automate writes.
 - **Partner/request-only**: direct integration may require approval, partnership, or paid/commercial licensing.
 
+## Current implementation snapshot
+
+- **26/26 (100%)** services are selectable in the web UI, exposed by `GET /v1/services`, and visible through `watchbridge services`.
+- **4/26 (15.4%)** have tested account-level official API connectors: TMDb, Trakt, Simkl, and MyAnimeList.
+- **3/26 (11.5%)** have dedicated user-file workflows: IMDb, Letterboxd, and MovieLens.
+- **2/26 (7.7%)** have tested metadata/recommendation-only connectors: TVmaze and TasteDive.
+- **13/26 (50.0%)** are manual-profile services; a user-provided export can be imported through the explicit mapped-CSV workflow when a lawful export is available.
+- **4/26 (15.4%)** remain restricted because their required access, licensing, or authorization has not been obtained: Rotten Tomatoes, JustWatch, TheTVDB, and AniList.
+
+"Selectable" never means account sync is available. See [Manual CSV Import](MANUAL_CSV_IMPORT.md) for the safe file workflow.
+
 | Service | Mode | Ratings | Watched | Watchlist | Reviews | Follow/follower | Notes |
 |---|---|---:|---:|---:|---:|---:|---|
 | IMDb | Export/import | Export/import | Limited | Export | Limited | Manual | Use CSV/user-owned workflows where available. |
@@ -18,9 +29,9 @@ Capability levels:
 | Trakt | Official API | Read/write | Read/write | Read/write | Limited | Limited | Strong sync target/source. |
 | Simkl | Official API | Read/write | Read/write | Read/write | Limited | Limited | Supports movies, TV, anime. |
 | TVmaze | Official API | Metadata | Metadata | No | No | No | TV metadata and matching. |
-| TheTVDB | Official API/license | Metadata | No | No | No | No | Metadata matching; license may apply. |
+| TheTVDB | Partner/request-only | No connector | No | No | No | No | Requires approved project-level licensing and credentials. |
 | MyAnimeList | Official API | Read/write | Read/write | Read/write | Limited | Limited | Anime/manga. |
-| AniList | Official GraphQL API | Read/write | Read/write | Read/write | Limited | Limited | Anime/manga. |
+| AniList | Partner/request-only | No connector | No connector | No connector | No | No | Not enabled pending explicit authorization. |
 | Metacritic | Manual | Manual | No | No | Manual | No | No safe write connector by default. |
 | JustWatch | Partner/request-only | No | No | No | No | No | Streaming availability metadata only with approved access. |
 | Reelgood | Manual | Manual | Manual | Manual | Manual | No | Manual/export profile. |

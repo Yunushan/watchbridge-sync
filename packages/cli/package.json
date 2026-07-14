@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "echo 'No CLI tests yet'",
+    "test": "vitest run src",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -16,6 +16,7 @@
     "@watchbridge/connectors": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "latest"
+    "typescript": "latest",
+    "vitest": "latest"
   }
 }
