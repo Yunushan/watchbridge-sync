@@ -6,12 +6,12 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter @watchbridge/api dev & pnpm --filter @watchbridge/web dev",
-    "build": "pnpm -r --sort build",
-    "test": "pnpm -r test",
-    "lint": "pnpm build && pnpm -r --sort lint",
+    "dev": "corepack pnpm --parallel --filter @watchbridge/api --filter @watchbridge/web dev",
+    "build": "corepack pnpm -r --sort build",
+    "test": "corepack pnpm -r test",
+    "lint": "corepack pnpm build && corepack pnpm -r --sort lint",
     "format": "prettier -w .",
-    "check": "pnpm lint && pnpm test && pnpm build"
+    "check": "corepack pnpm lint && corepack pnpm test && corepack pnpm build"
   },
   "devDependencies": {
     "@types/node": "latest",

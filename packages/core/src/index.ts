@@ -4,3 +4,7 @@ export * from './capabilities.js';
 export * from './syncPlanner.js';
 export * from './csv.js';
 export * from './services.js';
+export * from './runtimeSupport.js';
+export * from './supportSummary.js';
+export * from './identity.js';
+export * from './plexIdentity.js';

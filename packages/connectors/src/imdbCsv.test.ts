@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createImdbRatingsImportCsv, parseImdbRatingsCsv, parseImdbWatchlistCsv } from './imdbCsv.js';
+import { parseCsv, RATING_SCALES } from '@watchbridge/core';
+import { createImdbRatingsCsv, parseImdbRatingsCsv, parseImdbWatchlistCsv } from './imdbCsv.js';
 
 describe('IMDb CSV workflows', () => {
   it('parses a ratings export into canonical data', () => {
@@ -12,8 +13,30 @@ describe('IMDb CSV workflows', () => {
     expect(list[0]).toMatchObject({ listedAt: '2026-01-02', item: { kind: 'tv-show', externalIds: { imdb: 'tt0944947' } } });
   });
 
-  it('creates a ratings import CSV that can round-trip its identifiers', () => {
+  it('creates a portable ratings CSV that can round-trip its identifiers', () => {
     const input = parseImdbRatingsCsv('Const,YourRating,DateRated,Title,TitleType,Year\ntt0113277,9,2026-01-01,Heat,movie,1995');
-    expect(createImdbRatingsImportCsv(input)).toContain('tt0113277,9,2026-01-01,Heat');
+    expect(createImdbRatingsCsv(input)).toContain('tt0113277,9,2026-01-01,Heat');
+  });
+
+  it('converts MovieLens ratings from their canonical 0.5-5 scale', () => {
+    const csv = createImdbRatingsCsv([{
+      item: { id: 'movielens:1', kind: 'movie', title: 'Toy Story', year: 1995, externalIds: { imdb: 'tt0114709', movielens: 1 } },
+      sourceService: 'movielens',
+      value: 4.5,
+      scale: RATING_SCALES.letterboxd5Half
+    }]);
+
+    expect(parseCsv(csv)[0]?.YourRating).toBe('9');
+  });
+
+  it('uses the rating record scale instead of assuming a service scale', () => {
+    const csv = createImdbRatingsCsv([{
+      item: { id: 'custom:heat', kind: 'movie', title: 'Heat', externalIds: { imdb: 'tt0113277' } },
+      sourceService: 'serializd',
+      value: 80,
+      scale: { min: 0, max: 100, step: 1, name: 'Custom percentage' }
+    }]);
+
+    expect(parseCsv(csv)[0]?.YourRating).toBe('8');
   });
 });

@@ -1,0 +1,159 @@
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  AccountSyncPanel,
+  AccountSyncRequestError,
+  AccountSyncResultDetails,
+  buildAccountSyncRequest,
+  CONTEXT_EXAMPLES,
+  MAX_ACCOUNT_SYNC_BYTES,
+  parseAccountConnectorContext,
+  postAccountSyncJson,
+  type AccountSyncFormValues
+} from './AccountSyncPanel.js';
+
+const validValues: AccountSyncFormValues = {
+  source: 'tmdb',
+  target: 'trakt',
+  selection: { ratings: true, watched: true, watchlist: false },
+  conflictPolicy: 'manual',
+  direction: 'one-way',
+  dryRun: true,
+  confirmWrite: false,
+  sourceContextText: '{"accessToken":"source-token"}',
+  targetContextText: '{"accessToken":"target-token","apiKey":"client-id"}'
+};
+
+describe('AccountSyncPanel input safety', () => {
+  it('builds one-way and two-way requests between different implemented connectors', () => {
+    expect(buildAccountSyncRequest(validValues)).toEqual({
+      source: 'tmdb',
+      target: 'trakt',
+      selection: { ratings: true, watched: true, watchlist: false },
+      dryRun: true,
+      confirmWrite: false,
+      direction: 'one-way',
+      conflictPolicy: 'manual',
+      sourceContext: { accessToken: 'source-token' },
+      targetContext: { accessToken: 'target-token', apiKey: 'client-id' }
+    });
+    expect(() => buildAccountSyncRequest({ ...validValues, target: 'tmdb' })).toThrow('must be different');
+    expect(() => buildAccountSyncRequest({
+      ...validValues,
+      selection: { ratings: false, watched: false, watchlist: false }
+    })).toThrow('at least one feature');
+    expect(() => buildAccountSyncRequest({ ...validValues, dryRun: false })).toThrow('explicit confirmation');
+    expect(buildAccountSyncRequest({ ...validValues, direction: 'two-way' })).toMatchObject({ direction: 'two-way' });
+  });
+
+  it('requires each connector context to be valid JSON object data', () => {
+    expect(parseAccountConnectorContext('{"accessToken":"token"}', 'Source')).toEqual({ accessToken: 'token' });
+    expect(() => parseAccountConnectorContext('[]', 'Target')).toThrow('Target connector context must be one JSON object');
+    expect(() => parseAccountConnectorContext('{', 'Source')).toThrow('Source connector context must be valid JSON');
+  });
+
+  it('renders every registered account connector, ephemeral secrets, and write gates', () => {
+    const html = renderToStaticMarkup(<AccountSyncPanel />);
+    expect(html).toContain('Account to account sync');
+    expect(html).toContain('TMDb');
+    expect(html).toContain('Trakt');
+    expect(html).toContain('SIMKL');
+    expect(html).toContain('MyAnimeList');
+    expect(html).toContain('Bangumi');
+    expect(html).toContain('Jellyfin');
+    expect(html).toContain('Emby');
+    expect(html).toContain('Source connector context JSON');
+    expect(html).toContain('Target connector context JSON');
+    expect(html).toContain('Dry run (recommended)');
+    expect(html).toContain('I confirm this remote account write');
+    expect(html).toContain('Two-way reconciliation');
+    expect(html).toContain('type="password"');
+    expect(html).toContain('only in this page&#x27;s memory');
+    expect(JSON.parse(CONTEXT_EXAMPLES.emby ?? '{}')).toEqual({
+      accessToken: 'emby-user-token', accountId: 'emby-user-id', baseUrl: 'https://emby.example.test/'
+    });
+    expect(JSON.parse(CONTEXT_EXAMPLES.kodi ?? '{}')).toEqual({
+      username: 'kodi-user', password: 'kodi-password', profileName: 'Master user',
+      kodiLibraryScope: '4b96405c-44f2-4cf7-b0a5-73a9bb14cabc', baseUrl: 'https://kodi.example.test/jsonrpc'
+    });
+    expect(JSON.parse(CONTEXT_EXAMPLES.shikimori ?? '{}')).toMatchObject({
+      accessToken: 'shikimori-user-token', accountId: '12345', oauthScope: 'user_rates'
+    });
+    expect(JSON.parse(CONTEXT_EXAMPLES.annict ?? '{}')).toMatchObject({
+      accessToken: 'annict-user-token', oauthScope: 'read write'
+    });
+    expect(JSON.parse(CONTEXT_EXAMPLES.plex ?? '{}')).toMatchObject({
+      accessToken: 'plex-account-token', clientIdentifier: 'watchbridge-installation-id',
+      plexServerId: 'selected-server-machine-id', userAgent: 'WatchBridge/0.1.0'
+    });
+  });
+});
+
+describe('AccountSyncPanel request boundary', () => {
+  it('posts same-origin JSON with browser credentials omitted and an optional API key header', async () => {
+    const request = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({
+      actions: [{ feature: 'ratings', status: 'previewed', count: 1 }],
+      job: { id: 'job-id', status: 'succeeded' }
+    }));
+    const body = buildAccountSyncRequest(validValues);
+
+    await expect(postAccountSyncJson(body, ' server-key ', request)).resolves.toMatchObject({
+      actions: [{ feature: 'ratings', status: 'previewed' }]
+    });
+    expect(request).toHaveBeenCalledWith('/v1/sync/execute', {
+      method: 'POST',
+      credentials: 'omit',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer server-key' },
+      body: JSON.stringify(body)
+    });
+    expect(String(request.mock.calls[0]?.[0])).not.toContain('source-token');
+    expect(String(request.mock.calls[0]?.[0])).not.toContain('server-key');
+  });
+
+  it('rejects requests beyond 10 MiB before fetch and retains structured API failures', async () => {
+    const oversizedRequest = vi.fn<typeof fetch>();
+    await expect(postAccountSyncJson({ context: 'x'.repeat(MAX_ACCOUNT_SYNC_BYTES) }, '', oversizedRequest))
+      .rejects.toThrow('10 MiB');
+    expect(oversizedRequest).not.toHaveBeenCalled();
+
+    const failedRequest = vi.fn(async () => Response.json({
+      error: 'Provider rejected a later batch.',
+      retrySafe: false,
+      job: { id: 'failed-job', status: 'failed', failedFeature: 'watched', writeMayBePartial: true },
+      targetBackupArtifact: { id: 'backup-id' }
+    }, { status: 400 }));
+    await expect(postAccountSyncJson({ safe: true }, '', failedRequest)).rejects.toMatchObject({
+      name: 'AccountSyncRequestError',
+      message: 'Provider rejected a later batch.',
+      details: {
+        retrySafe: false,
+        job: { id: 'failed-job', failedFeature: 'watched', writeMayBePartial: true },
+        targetBackupArtifact: { id: 'backup-id' }
+      }
+    } satisfies Partial<AccountSyncRequestError>);
+  });
+
+  it('renders actions, durable job, pre-write backup, and partial-write warnings', () => {
+    const html = renderToStaticMarkup(<AccountSyncResultDetails error="Provider rejected a later batch." result={{
+      actions: [{ feature: 'ratings', status: 'completed', count: 2 }, { feature: 'watched', status: 'failed', reason: 'provider error' }],
+      job: { id: 'failed-job', status: 'failed', failedFeature: 'watched', writeMayBePartial: true },
+      targetBackupArtifact: { id: 'backup-id' },
+      sourceBackupArtifact: { id: 'source-backup-id' },
+      failedDirection: { source: 'trakt', target: 'tmdb' },
+      retrySafe: false,
+      sourceBackup: { ratings: [{}, {}], watched: [], watchlist: [] },
+      targetBackup: { ratings: [{}], watched: [{}], watchlist: [] }
+    }} />);
+    expect(html).toContain('Partial execution details');
+    expect(html).toContain('failed-job');
+    expect(html).toContain('Failed feature: watched');
+    expect(html).toContain('trakt → tmdb');
+    expect(html).toContain('provider may contain a partial write');
+    expect(html).toContain('Do not retry automatically');
+    expect(html).toContain('2 records');
+    expect(html).toContain('download backup-id');
+    expect(html).toContain('download source-backup-id');
+    expect(html).toContain('Pre-write source backup');
+    expect(html).toContain('Pre-write target backup');
+  });
+});

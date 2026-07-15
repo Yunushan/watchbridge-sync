@@ -9,8 +9,11 @@ import {
   type ServiceId
 } from '@watchbridge/core';
 import type { ConnectorBackup, ConnectorContext, WatchBridgeConnector } from './base.js';
+import { connectorHttpOptions, requestJson } from './http.js';
 
 const MAL_API_URL = 'https://api.myanimelist.net/v2';
+const MAX_EXPORT_PAGES = 1_000;
+const MAX_EXPORT_RECORDS = 100_000;
 
 interface MalNode {
   id: number;
@@ -23,6 +26,8 @@ interface MalListStatus {
   updated_at?: string;
   num_episodes_watched?: number;
   num_chapters_read?: number;
+  num_times_rewatched?: number;
+  num_times_reread?: number;
 }
 
 interface MalListEntry {
@@ -33,6 +38,11 @@ interface MalListEntry {
 interface MalListResponse {
   data: MalListEntry[];
   paging?: { next?: string };
+}
+
+interface MalListUpdate {
+  path: string;
+  body: string;
 }
 
 export class MyAnimeListConnector implements WatchBridgeConnector {
@@ -66,27 +76,53 @@ export class MyAnimeListConnector implements WatchBridgeConnector {
   }
 
   async importRatings(ratings: CanonicalRating[], dryRun: boolean): Promise<void> {
-    for (const rating of ratings) {
-      if (dryRun) continue;
+    const updates = ratings.map((rating) => {
       const media = this.toMalMedia(rating.item);
       const score = convertRating(rating.value, rating.scale, RATING_SCALES.mal10).output;
-      await this.updateList(media, { score: String(score) });
+      return this.toListUpdate(media, { score: String(score) });
+    });
+    if (dryRun) return;
+    for (const update of updates) {
+      await this.updateList(update);
     }
   }
 
   async importWatched(entries: CanonicalWatchedEntry[], dryRun: boolean): Promise<void> {
-    for (const entry of entries) {
-      if (dryRun) continue;
+    const updates = entries.map((entry) => {
       const media = this.toMalMedia(entry.item);
-      await this.updateList(media, { status: 'completed' });
+      const values: Record<string, string> = {
+        status: entry.status === 'in-progress'
+          ? media.resource === 'anime' ? 'watching' : 'reading'
+          : 'completed'
+      };
+      if (entry.progress !== undefined) {
+        if (!Number.isInteger(entry.progress) || entry.progress < 0) {
+          throw new Error(`Cannot write invalid MyAnimeList progress ${entry.progress} for ${entry.item.title}.`);
+        }
+        values[media.resource === 'anime' ? 'num_watched_episodes' : 'num_chapters_read'] = String(entry.progress);
+      }
+      if (entry.plays !== undefined) {
+        if (!Number.isInteger(entry.plays) || entry.plays < 0) {
+          throw new Error(`Cannot write invalid MyAnimeList play count ${entry.plays} for ${entry.item.title}.`);
+        }
+        values[media.resource === 'anime' ? 'num_times_rewatched' : 'num_times_reread'] = String(entry.plays);
+      }
+      return this.toListUpdate(media, values);
+    });
+    if (dryRun) return;
+    for (const update of updates) {
+      await this.updateList(update);
     }
   }
 
   async importWatchlist(entries: CanonicalWatchlistEntry[], dryRun: boolean): Promise<void> {
-    for (const entry of entries) {
-      if (dryRun) continue;
+    const updates = entries.map((entry) => {
       const media = this.toMalMedia(entry.item);
-      await this.updateList(media, { status: media.resource === 'anime' ? 'plan_to_watch' : 'plan_to_read' });
+      return this.toListUpdate(media, { status: media.resource === 'anime' ? 'plan_to_watch' : 'plan_to_read' });
+    });
+    if (dryRun) return;
+    for (const update of updates) {
+      await this.updateList(update);
     }
   }
 
@@ -102,12 +138,19 @@ export class MyAnimeListConnector implements WatchBridgeConnector {
 
   private toWatched(entry: MalListEntry, kind: 'anime' | 'manga'): CanonicalWatchedEntry {
     const reading = kind === 'manga';
+    const progress = reading ? entry.list_status.num_chapters_read : entry.list_status.num_episodes_watched;
+    const plays = reading ? entry.list_status.num_times_reread : entry.list_status.num_times_rewatched;
+    const inProgress = entry.list_status.status === (reading ? 'reading' : 'watching');
     return {
       item: this.toItem(entry.node, kind),
       service: 'myanimelist',
-      status: entry.list_status.status === (reading ? 'reading' : 'watching') ? 'in-progress' : 'watched',
+      status: inProgress ? 'in-progress' : plays && plays > 0 ? 'rewatched' : 'watched',
       watchedAt: entry.list_status.updated_at,
-      plays: reading ? entry.list_status.num_chapters_read : entry.list_status.num_episodes_watched
+      // MyAnimeList returns both counters as part of list_status. Keep zero
+      // explicit so new backup-v1 archives cannot be confused with legacy
+      // MAL archives whose `plays` field actually held progress.
+      progress: progress ?? 0,
+      ...(plays !== undefined ? { plays } : {})
     };
   }
 
@@ -127,34 +170,55 @@ export class MyAnimeListConnector implements WatchBridgeConnector {
   private async getAll(path: string): Promise<MalListEntry[]> {
     const results: MalListEntry[] = [];
     let next: string | undefined = path;
+    const seenPages = new Set<string>();
     while (next) {
+      if (seenPages.has(next) || seenPages.size >= MAX_EXPORT_PAGES) {
+        throw new Error(`MyAnimeList returned cyclic or excessive pagination (maximum ${MAX_EXPORT_PAGES} pages).`);
+      }
+      seenPages.add(next);
       const response: MalListResponse = await this.request<MalListResponse>(next);
+      if (!response || !Array.isArray(response.data)) throw new Error('MyAnimeList returned an invalid paginated response.');
+      if (results.length + response.data.length > MAX_EXPORT_RECORDS) {
+        throw new Error(`MyAnimeList export exceeds the ${MAX_EXPORT_RECORDS}-record safety limit.`);
+      }
       results.push(...response.data);
       next = response.paging?.next;
     }
     return results;
   }
 
-  private async updateList(media: { resource: 'anime' | 'manga'; id: number }, values: Record<string, string>): Promise<void> {
-    await this.request(`/${media.resource}/${media.id}/my_list_status`, {
+  private toListUpdate(media: { resource: 'anime' | 'manga'; id: number }, values: Record<string, string>): MalListUpdate {
+    return {
+      path: `/${media.resource}/${media.id}/my_list_status`,
+      body: new URLSearchParams(values).toString()
+    };
+  }
+
+  private async updateList(update: MalListUpdate): Promise<void> {
+    await this.request(update.path, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(values).toString()
+      body: update.body
     });
   }
 
   private async request<T = unknown>(pathOrUrl: string, init: RequestInit = {}): Promise<T> {
     if (!this.ctx) throw new Error('MyAnimeList connector is not connected.');
-    const url = pathOrUrl.startsWith('http') ? new URL(pathOrUrl) : new URL(`${this.ctx.baseUrl ?? MAL_API_URL}${pathOrUrl}`);
-    const response = await (this.ctx.fetch ?? fetch)(url, {
+    const providerBase = this.ctx.baseUrl ?? MAL_API_URL;
+    const providerOrigin = new URL(providerBase).origin;
+    const absolute = /^[a-z][a-z\d+.-]*:/i.test(pathOrUrl) || pathOrUrl.startsWith('//');
+    const url = absolute ? new URL(pathOrUrl, providerBase) : new URL(`${providerBase}${pathOrUrl}`);
+    if (url.origin !== providerOrigin) {
+      throw new Error(`MyAnimeList pagination URL must stay on the configured provider origin (${providerOrigin}).`);
+    }
+    const response = await requestJson<T>(url, {
       ...init,
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${this.ctx.accessToken}`,
         ...(init.headers ?? {})
       }
-    });
-    if (!response.ok) throw new Error(`MyAnimeList API request failed (${response.status}): ${await response.text()}`);
-    return response.json() as Promise<T>;
+    }, connectorHttpOptions('MyAnimeList', this.ctx));
+    return response.data;
   }
 }

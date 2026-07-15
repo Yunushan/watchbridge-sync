@@ -18,18 +18,28 @@ function itemFromRow(row: Record<string, string>): CanonicalMediaItem {
   };
 }
 
+function ratingFromRow(row: Record<string, string>): number | undefined {
+  if (!row.Rating) return undefined;
+  const value = Number(row.Rating);
+  const scale = RATING_SCALES.letterboxd5Half;
+  return Number.isFinite(value) && value >= scale.min && value <= scale.max
+    ? value
+    : undefined;
+}
+
 export function parseLetterboxdRatingsCsv(csv: string): CanonicalRating[] {
   const rows = parseCsv(csv);
   return rows
-    .filter((row) => row.Rating || row.Name)
-    .map((row): CanonicalRating => {
-      return {
+    .flatMap((row): CanonicalRating[] => {
+      const value = ratingFromRow(row);
+      if (!row.Name || value === undefined) return [];
+      return [{
         item: itemFromRow(row),
         sourceService: 'letterboxd',
-        value: Number(row.Rating),
+        value,
         scale: RATING_SCALES.letterboxd5Half,
         ratedAt: row.Date || undefined
-      };
+      }];
     });
 }
 
@@ -53,20 +63,23 @@ export function parseLetterboxdWatchlistCsv(csv: string): CanonicalWatchlistEntr
 export function parseLetterboxdReviewsCsv(csv: string): CanonicalReview[] {
   return parseCsv(csv)
     .filter((row) => row.Name && (row.Review || row.Rating))
-    .map((row) => ({
-      item: itemFromRow(row),
-      service: 'letterboxd' as const,
-      body: row.Review ?? '',
-      ...(row.Rating ? {
-        rating: {
-          item: itemFromRow(row),
-          sourceService: 'letterboxd' as const,
-          value: Number(row.Rating),
-          scale: RATING_SCALES.letterboxd5Half,
-          ratedAt: row.Date || undefined,
-          reviewText: row.Review || undefined
-        }
-      } : {}),
-      reviewedAt: row.Date || undefined
-    }));
+    .map((row) => {
+      const value = ratingFromRow(row);
+      return {
+        item: itemFromRow(row),
+        service: 'letterboxd' as const,
+        body: row.Review ?? '',
+        ...(value !== undefined ? {
+          rating: {
+            item: itemFromRow(row),
+            sourceService: 'letterboxd' as const,
+            value,
+            scale: RATING_SCALES.letterboxd5Half,
+            ratedAt: row.Date || undefined,
+            reviewText: row.Review || undefined
+          }
+        } : {}),
+        reviewedAt: row.Date || undefined
+      };
+    });
 }

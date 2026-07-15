@@ -1,13 +1,11 @@
-import { parseCsv, RATING_SCALES, toCsv, type CanonicalMediaItem, type CanonicalRating, type CanonicalWatchlistEntry } from '@watchbridge/core';
-import { convertBetweenServices } from '@watchbridge/core';
+import { convertRating, parseCsv, RATING_SCALES, toCsv, type CanonicalMediaItem, type CanonicalRating, type CanonicalWatchlistEntry } from '@watchbridge/core';
 
-export function createImdbRatingsImportCsv(ratings: CanonicalRating[]): string {
+/** Creates a portable IMDb-shaped ratings CSV; IMDb account import is not claimed. */
+export function createImdbRatingsCsv(ratings: CanonicalRating[]): string {
   return toCsv(
     ratings.map((rating) => {
       const imdbId = rating.item.externalIds.imdb ?? '';
-      const converted = rating.sourceService === 'letterboxd'
-        ? convertBetweenServices(rating.value, 'letterboxd', 'imdb').output
-        : Math.round(rating.value);
+      const converted = convertRating(rating.value, rating.scale, RATING_SCALES.imdb10).output;
       return {
         Const: imdbId,
         YourRating: String(converted),

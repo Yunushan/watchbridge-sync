@@ -31,14 +31,23 @@ export function parseCsv(input: string): CsvRow[] {
       cell += char;
     }
   }
+  if (inQuotes) throw new Error('CSV contains an unterminated quoted field.');
   if (cell.length > 0 || row.length > 0) {
     row.push(cell);
     rows.push(row);
   }
 
-  const [headers, ...data] = rows.filter((r) => r.some((c) => c.trim().length > 0));
-  if (!headers) return [];
-  return data.map((values) => Object.fromEntries(headers.map((h, i) => [h.trim(), values[i]?.trim() ?? ''])));
+  const [rawHeaders, ...data] = rows.filter((r) => r.some((c) => c.trim().length > 0));
+  if (!rawHeaders) return [];
+  const headers = rawHeaders.map((header, index) => index === 0 ? header.trim().replace(/^\uFEFF/, '') : header.trim());
+  if (headers.some((header) => !header)) throw new Error('CSV header names must not be empty.');
+  if (new Set(headers).size !== headers.length) throw new Error('CSV header names must be unique.');
+  return data.map((values, index) => {
+    if (values.slice(headers.length).some((value) => value.trim())) {
+      throw new Error(`CSV row ${index + 2} has more values than the header.`);
+    }
+    return Object.fromEntries(headers.map((header, column) => [header, values[column]?.trim() ?? '']));
+  });
 }
 
 export function toCsv(rows: CsvRow[]): string {

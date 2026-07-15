@@ -1,5 +1,6 @@
 import { getCapabilities, type CanonicalMediaItem, type ServiceId } from '@watchbridge/core';
 import type { ConnectorBackup, ConnectorContext, WatchBridgeConnector } from './base.js';
+import { connectorHttpOptions, requestJson } from './http.js';
 
 const TVMAZE_API_URL = 'https://api.tvmaze.com';
 
@@ -57,10 +58,9 @@ export class TvMazeConnector implements WatchBridgeConnector {
 
   private async request<T>(path: string): Promise<T> {
     if (!this.ctx) throw new Error('TVmaze connector is not connected.');
-    const response = await (this.ctx.fetch ?? fetch)(new URL(`${this.ctx.baseUrl ?? TVMAZE_API_URL}${path}`), {
+    const response = await requestJson<T>(new URL(`${this.ctx.baseUrl ?? TVMAZE_API_URL}${path}`), {
       headers: { Accept: 'application/json', 'User-Agent': this.ctx.userAgent }
-    });
-    if (!response.ok) throw new Error(`TVmaze API request failed (${response.status}): ${await response.text()}`);
-    return response.json() as Promise<T>;
+    }, connectorHttpOptions('TVmaze', this.ctx));
+    return response.data;
   }
 }

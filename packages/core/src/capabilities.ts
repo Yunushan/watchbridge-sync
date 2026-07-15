@@ -30,38 +30,36 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     readMetadata: true,
     readRatings: true,
     exportRatings: true,
-    importRatings: true,
     readWatchlist: true,
     exportWatchlist: true,
     apiAuth: 'none',
-    integrationMode: 'official-export-import',
-    notes: 'Use user-owned IMDb CSV exports/import workflows where available; direct write API is not assumed.'
+    integrationMode: 'official-export',
+    notes: 'Shipped readers accept IMDb ratings/watchlist exports. The portable CSV helper does not imply IMDb account import or a direct account writer.'
   },
   'rotten-tomatoes': {
     ...NONE,
     readMetadata: true,
     apiAuth: 'unknown',
     integrationMode: 'partner-or-request-only',
-    notes: 'Public free direct user write sync is not assumed; keep as manual/export-only unless approved API access is granted.'
+    notes: 'No connector or mapped-file workflow is enabled unless approved API or partner access is granted.'
   },
   letterboxd: {
     ...NONE,
     readMetadata: true,
     readRatings: true,
-    exportRatings: true,
     importRatings: true,
+    exportRatings: true,
     readWatched: true,
-    exportWatched: true,
     importWatched: true,
+    exportWatched: true,
     readWatchlist: true,
-    exportWatchlist: true,
     importWatchlist: true,
+    exportWatchlist: true,
     readReviews: true,
     exportReviews: true,
-    importReviews: true,
     apiAuth: 'unknown',
     integrationMode: 'official-export-import',
-    notes: 'API access is request-only; default connector uses official account export/import files.'
+    notes: 'Shipped readers accept official account exports. A shipped generator creates user-controlled files for Letterboxd’s documented web importer; no direct account writer is claimed.'
   },
   tmdb: {
     ...NONE,
@@ -76,7 +74,7 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     exportWatchlist: true,
     apiAuth: 'oauth2',
     integrationMode: 'official-api',
-    notes: 'Use TMDb API v3/v4 and account auth for ratings/watchlist where authorized.'
+    notes: 'Uses a user-authorized v4 token and account object ID for exports; v3 writes also require a converted session and numeric account ID.'
   },
   'tv-time': {
     ...NONE,
@@ -157,9 +155,10 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
   },
   thetvdb: {
     ...NONE,
+    readMetadata: true,
     apiAuth: 'api-key',
-    integrationMode: 'partner-or-request-only',
-    notes: 'No connector is enabled until project-level licensing and approved credentials are available.'
+    integrationMode: 'metadata-only',
+    notes: 'V4 metadata resolver requires a caller-provided authorized project key and, for user-supported access, subscriber PIN.'
   },
   tvmaze: {
     ...NONE,
@@ -170,7 +169,7 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
   },
   allmovie: { ...NONE, readMetadata: true, apiAuth: 'unknown', integrationMode: 'manual', notes: 'Manual/read-only profile.' },
   criticker: { ...NONE, readRatings: true, exportRatings: true, apiAuth: 'unknown', integrationMode: 'manual', notes: 'Manual/export profile until official API is confirmed.' },
-  movielens: { ...NONE, readMetadata: true, readRatings: true, exportRatings: true, importRatings: true, apiAuth: 'unknown', integrationMode: 'official-export-import', notes: 'Use user-owned ratings exports/imports where available.' },
+  movielens: { ...NONE, readMetadata: true, readRatings: true, exportRatings: true, apiAuth: 'unknown', integrationMode: 'official-export', notes: 'Shipped reader accepts a user-owned ratings export; no MovieLens-target file generator is shipped.' },
   filmaffinity: { ...NONE, readRatings: true, exportRatings: true, apiAuth: 'unknown', integrationMode: 'manual', notes: 'Manual/export profile.' },
   flickchart: { ...NONE, readRatings: true, exportRatings: true, apiAuth: 'unknown', integrationMode: 'manual', notes: 'Rankings may need a custom mapping to ratings.' },
   tastedive: { ...NONE, readMetadata: true, apiAuth: 'api-key', integrationMode: 'metadata-only', notes: 'Recommendation metadata connector.' },
@@ -195,6 +194,111 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     apiAuth: 'oauth2',
     integrationMode: 'official-api',
     notes: 'Anime/manga connector; use official OAuth API.'
+  },
+  kitsu: {
+    ...NONE,
+    readMetadata: true,
+    apiAuth: 'none',
+    integrationMode: 'metadata-only',
+    notes: 'Current official OpenAPI supports public exact-ID reads for anime, manga, and episodes only. Library entries, users, mappings, and their schemas are commented out, so ratings, watched/progress, watchlist, search, mapping, and account authentication remain unsupported.'
+  },
+  shikimori: {
+    ...NONE,
+    readRatings: true,
+    writeRatings: true,
+    importRatings: true,
+    exportRatings: true,
+    readWatched: true,
+    writeWatched: true,
+    importWatched: true,
+    exportWatched: true,
+    readWatchlist: true,
+    writeWatchlist: true,
+    importWatchlist: true,
+    exportWatchlist: true,
+    apiAuth: 'oauth2',
+    integrationMode: 'official-api',
+    notes: 'Official OAuth user-rates API for anime. WatchBridge preserves mutually exclusive planned, watching, rewatching, completed, on-hold, and dropped states plus bounded episode progress and replay count. Rating-only writes require an existing user rate; provider timestamps cannot be preserved.'
+  },
+  annict: {
+    ...NONE,
+    readWatched: true,
+    writeWatched: true,
+    importWatched: true,
+    exportWatched: true,
+    readWatchlist: true,
+    writeWatchlist: true,
+    importWatchlist: true,
+    exportWatchlist: true,
+    apiAuth: 'oauth2',
+    integrationMode: 'official-api',
+    notes: 'Official REST v1 plus documented GraphQL viewer records for exact episode play counts and work-level watching, completed, on-hold, dropped, and planned states. Writes are monotonic/additive and reject timestamps or progress. Annict ratings belong to individual episode records and are intentionally not modeled as one title rating.'
+  },
+  bangumi: {
+    ...NONE,
+    readRatings: true,
+    writeRatings: true,
+    importRatings: true,
+    exportRatings: true,
+    readWatched: true,
+    writeWatched: true,
+    importWatched: true,
+    exportWatched: true,
+    readWatchlist: true,
+    writeWatchlist: true,
+    importWatchlist: true,
+    exportWatchlist: true,
+    apiAuth: 'oauth2',
+    integrationMode: 'official-api',
+    notes: 'Official v0 OAuth API for anime collections. Watched sync preserves collection status plus exact completed episode IDs. Rating writes require an existing collection, and provider timestamps are rejected because the write contract cannot preserve them. On-hold/dropped states and book progress are not modeled.'
+  },
+  jellyfin: {
+    ...NONE,
+    readRatings: true,
+    writeRatings: true,
+    importRatings: true,
+    exportRatings: true,
+    readWatched: true,
+    writeWatched: true,
+    importWatched: true,
+    exportWatched: true,
+    apiAuth: 'session-token',
+    integrationMode: 'official-api',
+    notes: 'Official per-user API for numeric personal Rating and completed Played state on one explicitly configured HTTPS server. WatchBridge bounds Rating to 0-10 in 0.1 steps even though Jellyfin does not enforce that range. Favorites are not watchlists and remain unsupported.'
+  },
+  emby: {
+    ...NONE,
+    readWatched: true,
+    writeWatched: true,
+    importWatched: true,
+    exportWatched: true,
+    apiAuth: 'session-token',
+    integrationMode: 'official-api',
+    notes: 'Official per-user API for completed Played membership on movies and exact episodes from one explicitly configured HTTPS server. Aggregate series, progress, timestamps, replay counts, ratings, favorites, and watchlists are not represented.'
+  },
+  kodi: {
+    ...NONE,
+    readRatings: true,
+    writeRatings: true,
+    importRatings: true,
+    exportRatings: true,
+    readWatched: true,
+    writeWatched: true,
+    importWatched: true,
+    exportWatched: true,
+    apiAuth: 'basic',
+    integrationMode: 'official-api',
+    notes: 'Kodi Omega JSON-RPC v13.5 support for integer personal userrating and movie/exact-episode playcount in one explicitly scoped library/profile. Watchlist, resume progress, last-played timestamps, aggregate series state, and endpoint-derived identity are unsupported.'
+  },
+  plex: {
+    ...NONE,
+    readRatings: true,
+    writeRatings: true,
+    importRatings: true,
+    exportRatings: true,
+    apiAuth: 'session-token',
+    integrationMode: 'official-api',
+    notes: 'Official Plex Media Server API support for personal userRating on one explicitly selected and machine-ID-verified server. Rating keys are server-scoped. Watched state, timeline/scrobble operations, global watchlist, timestamps, and rating deletion are intentionally unsupported.'
   },
   anilist: {
     ...NONE,

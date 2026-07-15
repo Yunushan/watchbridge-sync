@@ -9,8 +9,11 @@ import {
   type ServiceId
 } from '@watchbridge/core';
 import type { ConnectorBackup, ConnectorContext, WatchBridgeConnector } from './base.js';
+import { connectorHttpOptions, requestJson, type JsonHttpResponse } from './http.js';
 
 const TRAKT_API_URL = 'https://api.trakt.tv';
+const MAX_EXPORT_PAGES = 1_000;
+const MAX_EXPORT_RECORDS = 100_000;
 
 interface TraktIds {
   trakt?: number | string;
@@ -25,6 +28,13 @@ interface TraktMedia {
   ids: TraktIds;
 }
 
+interface TraktEpisode {
+  title: string;
+  season: number;
+  number: number;
+  ids: TraktIds;
+}
+
 interface TraktRatingRow {
   rating: number;
   rated_at?: string;
@@ -36,6 +46,7 @@ interface TraktHistoryRow {
   watched_at?: string;
   movie?: TraktMedia;
   show?: TraktMedia;
+  episode?: TraktEpisode;
 }
 
 interface TraktWatchlistRow {
@@ -44,11 +55,11 @@ interface TraktWatchlistRow {
   show?: TraktMedia;
 }
 
-type TraktMediaType = 'movie' | 'show';
-
 interface TraktSyncPayload {
   movies: Array<Record<string, unknown>>;
   shows: Array<Record<string, unknown>>;
+  seasons: Array<Record<string, unknown>>;
+  episodes: Array<Record<string, unknown>>;
 }
 
 export class TraktConnector implements WatchBridgeConnector {
@@ -65,12 +76,12 @@ export class TraktConnector implements WatchBridgeConnector {
 
   async exportBackup(): Promise<ConnectorBackup> {
     const [movieRatings, showRatings, movieHistory, showHistory, movieWatchlist, showWatchlist] = await Promise.all([
-      this.request<TraktRatingRow[]>('/sync/ratings/movies'),
-      this.request<TraktRatingRow[]>('/sync/ratings/shows'),
-      this.request<TraktHistoryRow[]>('/sync/history/movies'),
-      this.request<TraktHistoryRow[]>('/sync/history/shows'),
-      this.request<TraktWatchlistRow[]>('/sync/watchlist/movies'),
-      this.request<TraktWatchlistRow[]>('/sync/watchlist/shows')
+      this.requestAll<TraktRatingRow>('/sync/ratings/movies'),
+      this.requestAll<TraktRatingRow>('/sync/ratings/shows'),
+      this.requestAll<TraktHistoryRow>('/sync/history/movies'),
+      this.requestAll<TraktHistoryRow>('/sync/history/shows'),
+      this.requestAll<TraktWatchlistRow>('/sync/watchlist/movies'),
+      this.requestAll<TraktWatchlistRow>('/sync/watchlist/shows')
     ]);
     return {
       service: 'trakt',
@@ -80,8 +91,8 @@ export class TraktConnector implements WatchBridgeConnector {
         ...showRatings.map((row) => this.toRating(row, 'tv-show'))
       ],
       watched: [
-        ...movieHistory.map((row) => this.toWatched(row, 'movie')),
-        ...showHistory.map((row) => this.toWatched(row, 'tv-show'))
+        ...movieHistory.map((row) => this.toMovieWatched(row)),
+        ...showHistory.map((row) => this.toEpisodeWatched(row))
       ],
       watchlist: [
         ...movieWatchlist.map((row) => this.toWatchlist(row, 'movie')),
@@ -91,33 +102,36 @@ export class TraktConnector implements WatchBridgeConnector {
   }
 
   async importRatings(ratings: CanonicalRating[], dryRun: boolean): Promise<void> {
-    if (dryRun || ratings.length === 0) return;
+    const body = ratings.length === 0 ? undefined : JSON.stringify(this.groupByType(ratings, (rating) => ({
+      ids: this.toTraktIds(rating.item),
+      rating: convertRating(rating.value, rating.scale, RATING_SCALES.trakt10).output,
+      ...(rating.ratedAt ? { rated_at: rating.ratedAt } : {})
+    })));
+    if (dryRun || body === undefined) return;
     await this.request('/sync/ratings', {
       method: 'POST',
-      body: JSON.stringify(this.groupByType(ratings, (rating) => ({
-        ids: this.toTraktIds(rating.item),
-        rating: convertRating(rating.value, rating.scale, RATING_SCALES.trakt10).output,
-        ...(rating.ratedAt ? { rated_at: rating.ratedAt } : {})
-      })))
+      body
     });
   }
 
   async importWatched(entries: CanonicalWatchedEntry[], dryRun: boolean): Promise<void> {
-    if (dryRun || entries.length === 0) return;
+    const body = entries.length === 0 ? undefined : JSON.stringify(this.groupByType(entries, (entry) => ({
+      ids: this.toTraktIds(entry.item),
+      ...(entry.watchedAt ? { watched_at: entry.watchedAt } : {})
+    })));
+    if (dryRun || body === undefined) return;
     await this.request('/sync/history', {
       method: 'POST',
-      body: JSON.stringify(this.groupByType(entries, (entry) => ({
-        ids: this.toTraktIds(entry.item),
-        ...(entry.watchedAt ? { watched_at: entry.watchedAt } : {})
-      })))
+      body
     });
   }
 
   async importWatchlist(entries: CanonicalWatchlistEntry[], dryRun: boolean): Promise<void> {
-    if (dryRun || entries.length === 0) return;
+    const body = entries.length === 0 ? undefined : JSON.stringify(this.groupByType(entries, (entry) => ({ ids: this.toTraktIds(entry.item) })));
+    if (dryRun || body === undefined) return;
     await this.request('/sync/watchlist', {
       method: 'POST',
-      body: JSON.stringify(this.groupByType(entries, (entry) => ({ ids: this.toTraktIds(entry.item) })))
+      body
     });
   }
 
@@ -131,8 +145,33 @@ export class TraktConnector implements WatchBridgeConnector {
     };
   }
 
-  private toWatched(row: TraktHistoryRow, kind: 'movie' | 'tv-show'): CanonicalWatchedEntry {
-    return { item: this.toItem(this.getMedia(row, kind), kind), service: 'trakt', status: 'watched', watchedAt: row.watched_at };
+  private toMovieWatched(row: TraktHistoryRow): CanonicalWatchedEntry {
+    return { item: this.toItem(this.getMedia(row, 'movie'), 'movie'), service: 'trakt', status: 'watched', watchedAt: row.watched_at };
+  }
+
+  private toEpisodeWatched(row: TraktHistoryRow): CanonicalWatchedEntry {
+    if (!row.show || !row.episode) throw new Error('Trakt show history response did not include its show and episode objects.');
+    const showTrakt = row.show.ids.trakt;
+    const episodeTrakt = row.episode.ids.trakt;
+    if (!showTrakt || !episodeTrakt) throw new Error(`Trakt episode ${row.episode.title} did not include both show and episode Trakt IDs.`);
+    return {
+      item: {
+        id: `trakt:show:${showTrakt}:episode:${episodeTrakt}`,
+        kind: 'episode',
+        title: row.episode.title,
+        year: row.show.year,
+        seasonNumber: row.episode.season,
+        episodeNumber: row.episode.number,
+        externalIds: {
+          trakt: episodeTrakt,
+          ...(row.episode.ids.imdb ? { imdb: row.episode.ids.imdb } : {}),
+          ...(row.episode.ids.tvdb ? { tvdb: row.episode.ids.tvdb } : {})
+        }
+      },
+      service: 'trakt',
+      status: 'watched',
+      watchedAt: row.watched_at
+    };
   }
 
   private toWatchlist(row: TraktWatchlistRow, kind: 'movie' | 'tv-show'): CanonicalWatchlistEntry {
@@ -163,10 +202,13 @@ export class TraktConnector implements WatchBridgeConnector {
   }
 
   private toTraktIds(item: CanonicalMediaItem): TraktIds {
+    const tmdb = item.kind === 'movie' ? item.externalIds.tmdbMovie
+      : item.kind === 'tv-show' ? item.externalIds.tmdbTv
+        : undefined;
     const ids: TraktIds = {
       ...(item.externalIds.trakt ? { trakt: item.externalIds.trakt } : {}),
       ...(item.externalIds.imdb ? { imdb: item.externalIds.imdb } : {}),
-      ...(item.externalIds.tmdbMovie ?? item.externalIds.tmdbTv ? { tmdb: item.externalIds.tmdbMovie ?? item.externalIds.tmdbTv } : {}),
+      ...(tmdb ? { tmdb } : {}),
       ...(item.externalIds.tvdb ? { tvdb: item.externalIds.tvdb } : {})
     };
     if (Object.keys(ids).length === 0) throw new Error(`Cannot write ${item.title} to Trakt without a compatible external ID.`);
@@ -174,14 +216,57 @@ export class TraktConnector implements WatchBridgeConnector {
   }
 
   private groupByType<T extends { item: CanonicalMediaItem }>(items: T[], transform: (item: T) => Record<string, unknown>): TraktSyncPayload {
-    const grouped: Record<TraktMediaType, Array<Record<string, unknown>>> = { movie: [], show: [] };
-    for (const item of items) grouped[item.item.kind === 'movie' ? 'movie' : 'show'].push(transform(item));
-    return { movies: grouped.movie, shows: grouped.show };
+    const grouped: TraktSyncPayload = { movies: [], shows: [], seasons: [], episodes: [] };
+    for (const item of items) {
+      const value = transform(item);
+      switch (item.item.kind) {
+        case 'movie': grouped.movies.push(value); break;
+        case 'tv-show': grouped.shows.push(value); break;
+        case 'season': grouped.seasons.push(value); break;
+        case 'episode': grouped.episodes.push(value); break;
+        default: throw new Error(`Cannot write ${item.item.kind} item ${item.item.title} to Trakt without an explicit Trakt media type.`);
+      }
+    }
+    return grouped;
   }
 
-  private async request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  private async requestAll<T>(path: string): Promise<T[]> {
+    const results: T[] = [];
+    let requestedPage = 1;
+    while (true) {
+      const url = this.toUrl(path);
+      url.searchParams.set('page', String(requestedPage));
+      const response = await this.fetchResponse<T[]>(url);
+      const page = response.data;
+      if (!Array.isArray(page)) throw new Error('Trakt returned an invalid paginated response.');
+      if (results.length + page.length > MAX_EXPORT_RECORDS) {
+        throw new Error(`Trakt export exceeds the ${MAX_EXPORT_RECORDS}-record safety limit.`);
+      }
+      results.push(...page);
+
+      const currentPage = this.positiveHeader(response.headers, 'X-Pagination-Page') ?? requestedPage;
+      const pageCount = this.positiveHeader(response.headers, 'X-Pagination-Page-Count') ?? currentPage;
+      if (currentPage !== requestedPage || pageCount < currentPage || pageCount > MAX_EXPORT_PAGES) {
+        throw new Error(`Trakt returned invalid or excessive pagination metadata (maximum ${MAX_EXPORT_PAGES} pages).`);
+      }
+      if (currentPage >= pageCount) return results;
+      requestedPage = currentPage + 1;
+    }
+  }
+
+  private positiveHeader(headers: Headers, name: string): number | undefined {
+    const value = Number(headers.get(name));
+    return Number.isInteger(value) && value > 0 ? value : undefined;
+  }
+
+  private toUrl(path: string): URL {
     if (!this.ctx) throw new Error('Trakt connector is not connected.');
-    const response = await (this.ctx.fetch ?? fetch)(new URL(`${this.ctx.baseUrl ?? TRAKT_API_URL}${path}`), {
+    return new URL(`${this.ctx.baseUrl ?? TRAKT_API_URL}${path}`);
+  }
+
+  private async fetchResponse<T>(url: URL, init: RequestInit = {}): Promise<JsonHttpResponse<T>> {
+    if (!this.ctx) throw new Error('Trakt connector is not connected.');
+    return requestJson<T>(url, {
       ...init,
       headers: {
         Accept: 'application/json',
@@ -191,9 +276,11 @@ export class TraktConnector implements WatchBridgeConnector {
         Authorization: `Bearer ${this.ctx.accessToken!}`,
         ...(init.headers ?? {})
       }
-    });
-    if (!response.ok) throw new Error(`Trakt API request failed (${response.status}): ${await response.text()}`);
-    if (response.status === 204) return undefined as T;
-    return response.json() as Promise<T>;
+    }, connectorHttpOptions('Trakt', this.ctx));
+  }
+
+  private async request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+    const response = await this.fetchResponse<T>(this.toUrl(path), init);
+    return response.data;
   }
 }

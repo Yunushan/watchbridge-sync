@@ -1,5 +1,6 @@
 services:
   postgres:
+    profiles: ["scaffolding"]
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: watchbridge
@@ -10,6 +11,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
   redis:
+    profiles: ["scaffolding"]
     image: redis:7-alpine
     ports:
       - "6379:6379"

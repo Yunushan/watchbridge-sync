@@ -14,7 +14,7 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build

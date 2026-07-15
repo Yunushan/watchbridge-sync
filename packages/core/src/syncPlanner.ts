@@ -1,54 +1,169 @@
-import { getCapabilities } from './capabilities.js';
-import type { ServiceId, SyncOperation, SyncRequest, SyncSelection } from './types.js';
-
-const FEATURE_MAP: Record<keyof SyncSelection, { read: keyof ReturnType<typeof getCapabilities>; write: keyof ReturnType<typeof getCapabilities>; export: keyof ReturnType<typeof getCapabilities>; import: keyof ReturnType<typeof getCapabilities> }> = {
-  ratings: { read: 'readRatings', write: 'writeRatings', export: 'exportRatings', import: 'importRatings' },
-  watched: { read: 'readWatched', write: 'writeWatched', export: 'exportWatched', import: 'importWatched' },
-  watchlist: { read: 'readWatchlist', write: 'writeWatchlist', export: 'exportWatchlist', import: 'importWatchlist' },
-  reviews: { read: 'readReviews', write: 'writeReviews', export: 'exportReviews', import: 'importReviews' },
-  following: { read: 'readFollowing', write: 'readFollowing', export: 'exportFollowing', import: 'readFollowing' },
-  followers: { read: 'readFollowers', write: 'readFollowers', export: 'exportFollowers', import: 'readFollowers' }
-};
+import { getRuntimeSupport, isExecutableSyncFeature, type ExecutableSyncFeature } from './runtimeSupport.js';
+import type { SyncOperation, SyncRequest, SyncSelection } from './types.js';
 
 function selectedFeatures(selection: SyncSelection): Array<keyof SyncSelection> {
   return (Object.keys(selection) as Array<keyof SyncSelection>).filter((key) => selection[key]);
 }
 
-function boolCapability(service: ServiceId, capability: keyof ReturnType<typeof getCapabilities>): boolean {
-  return Boolean(getCapabilities(service)[capability]);
+function blockedOperation(
+  request: SyncRequest,
+  feature: keyof SyncSelection,
+  description: string,
+  warning: string
+): SyncOperation {
+  return {
+    type: 'blocked',
+    feature,
+    source: request.source,
+    target: request.target,
+    description,
+    warnings: [warning]
+  };
 }
 
-export function planSync(request: SyncRequest): SyncOperation[] {
-  const operations: SyncOperation[] = [];
-  for (const feature of selectedFeatures(request.selection)) {
-    const caps = FEATURE_MAP[feature];
-    const sourceCanRead = boolCapability(request.source, caps.read);
-    const sourceCanExport = boolCapability(request.source, caps.export);
-    const targetCanWrite = boolCapability(request.target, caps.write);
-    const targetCanImport = boolCapability(request.target, caps.import);
+function supports(features: readonly ExecutableSyncFeature[], feature: ExecutableSyncFeature): boolean {
+  return features.includes(feature);
+}
 
-    if (!sourceCanRead && !sourceCanExport) {
-      operations.push({
-        type: 'blocked',
-        feature,
-        source: request.source,
-        target: request.target,
-        description: `${request.source} cannot read or export ${feature} with the current safe connector.`,
-        warnings: ['Unsupported source capability. Use manual export if the service provides one.']
-      });
-      continue;
-    }
-
-    operations.push({
-      type: sourceCanRead ? 'read' : 'export-file',
+function sourceOperation(request: SyncRequest, feature: ExecutableSyncFeature): SyncOperation | undefined {
+  const support = getRuntimeSupport(request.source);
+  if (supports(support.accountReadFeatures, feature)) {
+    return {
+      type: 'read',
       feature,
       source: request.source,
       target: request.target,
-      description: sourceCanRead
-        ? `Read ${feature} from ${request.source}.`
-        : `Ask user to upload/export ${feature} from ${request.source}.`,
+      description: `Read ${feature} from ${request.source} with its shipped account connector.`,
       warnings: []
-    });
+    };
+  }
+  if (supports(support.fileReadFeatures, feature)) {
+    const mapped = support.workflow === 'manual-mapping';
+    return {
+      type: 'import-file',
+      feature,
+      source: request.source,
+      target: request.target,
+      description: mapped
+        ? `Import ${feature} from a lawful, user-supplied ${request.source} export using the mapped-CSV workflow.`
+        : `Import ${feature} from a user-supplied ${request.source} file using its shipped reader.`,
+      warnings: [mapped
+        ? 'WatchBridge does not fetch this service or guarantee that it offers an export; the user must provide the file.'
+        : 'The user must download and provide the source file.']
+    };
+  }
+  return undefined;
+}
+
+export function planSync(request: SyncRequest): SyncOperation[] {
+  const features = selectedFeatures(request.selection);
+
+  if (request.source === request.target) {
+    return features.map((feature) => blockedOperation(
+      request,
+      feature,
+      `Source and target are both ${request.source}.`,
+      'Choose two different services for a portability plan.'
+    ));
+  }
+
+  // Bangumi exposes provider-native subject/episode IDs, while no other
+  // shipped connector or mapped-file reader currently emits those IDs and
+  // Bangumi exports no IDs accepted by another shipped account writer. Keep
+  // account-to-account planning honest until a verified identity-enrichment
+  // step exists. Canonical backup restore remains available when the caller
+  // supplies verified Bangumi IDs.
+  if (request.source === 'bangumi' || request.target === 'bangumi') {
+    return features.map((feature) => blockedOperation(
+      request,
+      feature,
+      `Cross-service ${feature} involving Bangumi lacks a shipped identity-enrichment path.`,
+      'Use a validated canonical backup containing verified Bangumi IDs for Bangumi writes; ordinary account exports cannot currently bridge this pair.'
+    ));
+  }
+
+  if (request.direction === 'two-way') {
+    const operations: SyncOperation[] = [];
+    const sourceSupport = getRuntimeSupport(request.source);
+    const targetSupport = getRuntimeSupport(request.target);
+    for (const feature of features) {
+      if (!isExecutableSyncFeature(feature)) {
+        operations.push(blockedOperation(
+          request,
+          feature,
+          `${feature} exists in the canonical model but has no executable sync pipeline.`,
+          'Reviews, following, and followers remain model-only until the backup schema and connector runtime can round-trip them.'
+        ));
+        continue;
+      }
+      const sourceReady = supports(sourceSupport.accountReadFeatures, feature)
+        && supports(sourceSupport.accountWriteFeatures, feature);
+      const targetReady = supports(targetSupport.accountReadFeatures, feature)
+        && supports(targetSupport.accountWriteFeatures, feature);
+      if (!sourceReady || !targetReady) {
+        operations.push(blockedOperation(
+          request,
+          feature,
+          `Two-way ${feature} requires account read and write support on both ${request.source} and ${request.target}.`,
+          'Dedicated-file, mapped-file, metadata-only, restricted, and partially supported account paths cannot execute two-way synchronization.'
+        ));
+        continue;
+      }
+      for (const [source, target] of [[request.source, request.target], [request.target, request.source]] as const) {
+        operations.push({
+          type: 'read',
+          feature,
+          source,
+          target,
+          description: `Read ${feature} from ${source} with its shipped account connector for two-way reconciliation.`,
+          warnings: []
+        });
+        operations.push({
+          type: 'transform',
+          feature,
+          source,
+          target,
+          description: `Reconcile ${feature} from the immutable ${source} and ${target} snapshots without duplicate echo writes.`,
+          warnings: []
+        });
+        operations.push({
+          type: 'write',
+          feature,
+          source,
+          target,
+          description: request.dryRun
+            ? `Dry-run: preview reconciled ${feature} writes from ${source} to ${target}.`
+            : `Write reconciled ${feature} from ${source} to ${target} using the shipped account connector.`,
+          warnings: request.dryRun ? ['Dry-run only; no remote changes.'] : []
+        });
+      }
+    }
+    return operations;
+  }
+
+  const operations: SyncOperation[] = [];
+  for (const feature of features) {
+    if (!isExecutableSyncFeature(feature)) {
+      operations.push(blockedOperation(
+        request,
+        feature,
+        `${feature} exists in the canonical model but has no executable sync pipeline.`,
+        'Reviews, following, and followers remain model-only until the backup schema and connector runtime can round-trip them.'
+      ));
+      continue;
+    }
+
+    const source = sourceOperation(request, feature);
+    if (!source) {
+      operations.push(blockedOperation(
+        request,
+        feature,
+        `${request.source} has no shipped account or file reader for ${feature}.`,
+        'Selectable catalog entries do not automatically have an executable data path.'
+      ));
+      continue;
+    }
+    operations.push(source);
 
     operations.push({
       type: 'transform',
@@ -61,7 +176,8 @@ export function planSync(request: SyncRequest): SyncOperation[] {
         : []
     });
 
-    if (targetCanWrite) {
+    const target = getRuntimeSupport(request.target);
+    if (supports(target.accountWriteFeatures, feature)) {
       operations.push({
         type: 'write',
         feature,
@@ -69,17 +185,17 @@ export function planSync(request: SyncRequest): SyncOperation[] {
         target: request.target,
         description: request.dryRun
           ? `Dry-run: preview ${feature} writes to ${request.target}.`
-          : `Write ${feature} to ${request.target} using the official connector.`,
+          : `Write ${feature} to ${request.target} using the shipped account connector.`,
         warnings: request.dryRun ? ['Dry-run only; no remote changes.'] : []
       });
-    } else if (targetCanImport) {
+    } else if (supports(target.generatedImportFileFeatures, feature)) {
       operations.push({
         type: 'export-file',
         feature,
         source: request.source,
         target: request.target,
-        description: `Generate ${request.target}-compatible import file for ${feature}.`,
-        warnings: ['Target does not expose a safe direct write connector; use user-driven import.']
+        description: `Generate a ${request.target}-compatible ${feature} import file with the shipped generator.`,
+        warnings: ['The user controls the resulting file and any import into the target service.']
       });
     } else {
       operations.push({
@@ -87,8 +203,8 @@ export function planSync(request: SyncRequest): SyncOperation[] {
         feature,
         source: request.source,
         target: request.target,
-        description: `${request.target} does not support safe write/import for ${feature}; generate a human-readable backup only.`,
-        warnings: ['No safe direct sync path available.']
+        description: `Create a canonical backup for ${feature}; ${request.target} has no shipped write path or target-file generator.`,
+        warnings: ['No executable target sync path is available.']
       });
     }
   }

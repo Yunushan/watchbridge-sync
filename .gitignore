@@ -14,3 +14,5 @@ exports/
 imports/private/
 *.sqlite
 *.sqlite3
+.watchbridge-backups/
+.watchbridge-jobs/
