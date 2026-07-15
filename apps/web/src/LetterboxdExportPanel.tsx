@@ -3,7 +3,7 @@ import React, { useState, type ChangeEvent } from 'react';
 const MAX_BACKUP_BYTES = 10 * 1024 * 1024;
 const MAX_LETTERBOXD_FILE_BYTES = 1_000_000;
 
-type Feature = 'ratings' | 'watched' | 'watchlist';
+type Feature = 'ratings' | 'watched' | 'watchlist' | 'reviews';
 
 export interface LetterboxdGeneratedFile {
   fileName: string;
@@ -42,11 +42,11 @@ function parseGeneratedFiles(value: unknown): LetterboxdGeneratedFile[] {
   }
   return value.files.map((candidate) => {
     if (!object(candidate)) throw new Error('The API returned an invalid Letterboxd file entry.');
-    const validFeature = candidate.feature === 'ratings' || candidate.feature === 'watched' || candidate.feature === 'watchlist';
+    const validFeature = candidate.feature === 'ratings' || candidate.feature === 'watched' || candidate.feature === 'watchlist' || candidate.feature === 'reviews';
     const validDestination = candidate.importDestination === 'profile' || candidate.importDestination === 'watchlist';
     if (
       typeof candidate.fileName !== 'string'
-      || !/^letterboxd-(ratings|watched|watchlist)-\d{3}\.csv$/.test(candidate.fileName)
+      || !/^letterboxd-(ratings|watched|watchlist|reviews)-\d{3}\.csv$/.test(candidate.fileName)
       || candidate.contentType !== 'text/csv; charset=utf-8'
       || typeof candidate.content !== 'string'
       || byteLength(candidate.content) > MAX_LETTERBOXD_FILE_BYTES
@@ -95,7 +95,7 @@ export async function requestLetterboxdFiles(
 export function LetterboxdExportPanel() {
   const [backup, setBackup] = useState<unknown>();
   const [backupName, setBackupName] = useState('');
-  const [selection, setSelection] = useState<Record<Feature, boolean>>({ ratings: true, watched: true, watchlist: true });
+  const [selection, setSelection] = useState<Record<Feature, boolean>>({ ratings: true, watched: true, watchlist: true, reviews: true });
   const [apiKey, setApiKey] = useState('');
   const [files, setFiles] = useState<LetterboxdGeneratedFile[]>([]);
   const [error, setError] = useState<string>();
@@ -164,7 +164,7 @@ export function LetterboxdExportPanel() {
     </div>
     <fieldset>
       <legend>Files to generate</legend>
-      {(['ratings', 'watched', 'watchlist'] as const).map((feature) => <label key={feature} className="checkbox-label">
+      {(['ratings', 'watched', 'watchlist', 'reviews'] as const).map((feature) => <label key={feature} className="checkbox-label">
         <input type="checkbox" checked={selection[feature]} onChange={(event) => setSelection((current) => ({ ...current, [feature]: event.target.checked }))} />
         {feature}
       </label>)}
@@ -185,4 +185,3 @@ export function LetterboxdExportPanel() {
     </div>}
   </section>;
 }
-

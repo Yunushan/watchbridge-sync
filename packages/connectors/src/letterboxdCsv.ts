@@ -62,7 +62,7 @@ export function parseLetterboxdWatchlistCsv(csv: string): CanonicalWatchlistEntr
 
 export function parseLetterboxdReviewsCsv(csv: string): CanonicalReview[] {
   return parseCsv(csv)
-    .filter((row) => row.Name && (row.Review || row.Rating))
+    .filter((row) => row.Name && row.Review)
     .map((row) => {
       const value = ratingFromRow(row);
       return {

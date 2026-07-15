@@ -139,19 +139,6 @@ async function readOptionalProviderFile(path: string | undefined, io: CliIo): Pr
 async function importProviderFilePaths(value: unknown, io: CliIo): Promise<ReturnType<typeof importProviderFiles>> {
   const manifest = parseProviderFileImportManifest(value) as ProviderFileImportManifest;
   if (manifest.service === 'imdb') {
-    const [ratings, watchlist] = await Promise.all([
-      readOptionalProviderFile(manifest.files.ratings, io),
-      readOptionalProviderFile(manifest.files.watchlist, io)
-    ]);
-    return importProviderFiles({
-      service: manifest.service,
-      files: {
-        ...(ratings !== undefined ? { ratings } : {}),
-        ...(watchlist !== undefined ? { watchlist } : {})
-      }
-    });
-  }
-  if (manifest.service === 'letterboxd') {
     const [ratings, watched, watchlist] = await Promise.all([
       readOptionalProviderFile(manifest.files.ratings, io),
       readOptionalProviderFile(manifest.files.watched, io),
@@ -163,6 +150,23 @@ async function importProviderFilePaths(value: unknown, io: CliIo): Promise<Retur
         ...(ratings !== undefined ? { ratings } : {}),
         ...(watched !== undefined ? { watched } : {}),
         ...(watchlist !== undefined ? { watchlist } : {})
+      }
+    });
+  }
+  if (manifest.service === 'letterboxd') {
+    const [ratings, watched, watchlist, reviews] = await Promise.all([
+      readOptionalProviderFile(manifest.files.ratings, io),
+      readOptionalProviderFile(manifest.files.watched, io),
+      readOptionalProviderFile(manifest.files.watchlist, io),
+      readOptionalProviderFile(manifest.files.reviews, io)
+    ]);
+    return importProviderFiles({
+      service: manifest.service,
+      files: {
+        ...(ratings !== undefined ? { ratings } : {}),
+        ...(watched !== undefined ? { watched } : {}),
+        ...(watchlist !== undefined ? { watchlist } : {}),
+        ...(reviews !== undefined ? { reviews } : {})
       }
     });
   }
@@ -305,6 +309,17 @@ export async function run(args: string[], io: CliIo = defaultIo): Promise<void> 
     return;
   }
 
+  if (command === 'cleanup-storage' && source) {
+    await postRequestFile(
+      source,
+      target ?? 'http://localhost:8080',
+      '/v1/storage/cleanup',
+      'Storage cleanup',
+      io
+    );
+    return;
+  }
+
   const oauthCommand = command ? OAUTH_COMMANDS[command as keyof typeof OAUTH_COMMANDS] : undefined;
   if (oauthCommand && source) {
     await postRequestFile(
@@ -331,6 +346,7 @@ Usage:
   watchbridge resolve-metadata metadata-request.json [http://localhost:8080]
   watchbridge recommend recommendation-request.json [http://localhost:8080]
   watchbridge restore-backup backup-id restore-request.json [http://localhost:8080]
+  watchbridge cleanup-storage cleanup-request.json [http://localhost:8080]
   watchbridge oauth-trakt-device-start request.json [http://localhost:8080]
   watchbridge oauth-trakt-device-poll request.json [http://localhost:8080]
   watchbridge oauth-trakt-start request.json [http://localhost:8080]

@@ -1,6 +1,6 @@
 import type { ServiceId, SyncSelection } from './types.js';
 
-export const EXECUTABLE_SYNC_FEATURES = ['ratings', 'watched', 'watchlist'] as const;
+export const EXECUTABLE_SYNC_FEATURES = ['ratings', 'watched', 'watchlist', 'reviews', 'following', 'followers'] as const;
 
 export type ExecutableSyncFeature = typeof EXECUTABLE_SYNC_FEATURES[number];
 
@@ -32,7 +32,10 @@ export interface ServiceRuntimeSupport {
 }
 
 const NONE = [] as const;
-const PORTABLE_DATA = EXECUTABLE_SYNC_FEATURES;
+// Account methods and the generic mapped-CSV reader have different fidelity.
+// Keep them separate so a file parser cannot silently promote provider APIs.
+const ACCOUNT_PORTABLE_DATA = ['ratings', 'watched', 'watchlist'] as const;
+const MAPPED_PORTABLE_DATA = EXECUTABLE_SYNC_FEATURES;
 
 function support(
   workflow: RuntimeWorkflow,
@@ -54,58 +57,59 @@ function support(
 /** Exhaustive shipped-runtime registry for every selectable catalog entry. */
 export const SERVICE_RUNTIME_SUPPORT = {
   imdb: support('dedicated-file', {
-    fileReadFeatures: ['ratings', 'watchlist']
+    fileReadFeatures: ['ratings', 'watched', 'watchlist']
   }),
   'rotten-tomatoes': support('restricted'),
   letterboxd: support('dedicated-file', {
-    fileReadFeatures: ['ratings', 'watched', 'watchlist'],
-    generatedImportFileFeatures: ['ratings', 'watched', 'watchlist']
+    fileReadFeatures: ['ratings', 'watched', 'watchlist', 'reviews'],
+    generatedImportFileFeatures: ['ratings', 'watched', 'watchlist', 'reviews']
   }),
   tmdb: support('direct-account', {
     accountReadFeatures: ['ratings', 'watchlist'],
     accountWriteFeatures: ['ratings', 'watchlist'],
     metadata: true
   }),
-  'tv-time': support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
+  omdb: support('metadata-recommendation', { metadata: true }),
+  'tv-time': support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   trakt: support('direct-account', {
-    accountReadFeatures: PORTABLE_DATA,
-    accountWriteFeatures: PORTABLE_DATA
+    accountReadFeatures: ['ratings', 'watched', 'watchlist', 'reviews', 'following', 'followers'],
+    accountWriteFeatures: ['ratings', 'watched', 'watchlist', 'reviews', 'following']
   }),
   simkl: support('direct-account', {
-    accountReadFeatures: PORTABLE_DATA,
-    accountWriteFeatures: PORTABLE_DATA
+    accountReadFeatures: ACCOUNT_PORTABLE_DATA,
+    accountWriteFeatures: ACCOUNT_PORTABLE_DATA
   }),
-  metacritic: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
+  metacritic: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   justwatch: support('restricted'),
-  reelgood: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
-  serializd: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
+  reelgood: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
+  serializd: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   thetvdb: support('metadata-recommendation', { metadata: true }),
   tvmaze: support('metadata-recommendation', { metadata: true }),
-  allmovie: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
-  criticker: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
+  allmovie: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
+  criticker: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   movielens: support('dedicated-file', { fileReadFeatures: ['ratings'] }),
-  filmaffinity: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
-  flickchart: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
+  filmaffinity: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
+  flickchart: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   tastedive: support('metadata-recommendation', { recommendations: true }),
-  tasteio: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
-  mubi: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
-  'common-sense-media': support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
+  tasteio: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
+  mubi: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
+  'common-sense-media': support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   myanimelist: support('direct-account', {
-    accountReadFeatures: PORTABLE_DATA,
-    accountWriteFeatures: PORTABLE_DATA
+    accountReadFeatures: ACCOUNT_PORTABLE_DATA,
+    accountWriteFeatures: ACCOUNT_PORTABLE_DATA
   }),
   kitsu: support('metadata-recommendation', { metadata: true }),
   shikimori: support('direct-account', {
-    accountReadFeatures: PORTABLE_DATA,
-    accountWriteFeatures: PORTABLE_DATA
+    accountReadFeatures: ACCOUNT_PORTABLE_DATA,
+    accountWriteFeatures: ACCOUNT_PORTABLE_DATA
   }),
   annict: support('direct-account', {
     accountReadFeatures: ['watched', 'watchlist'],
     accountWriteFeatures: ['watched', 'watchlist']
   }),
   bangumi: support('direct-account', {
-    accountReadFeatures: PORTABLE_DATA,
-    accountWriteFeatures: PORTABLE_DATA
+    accountReadFeatures: ACCOUNT_PORTABLE_DATA,
+    accountWriteFeatures: ACCOUNT_PORTABLE_DATA
   }),
   jellyfin: support('direct-account', {
     accountReadFeatures: ['ratings', 'watched'],
@@ -116,16 +120,16 @@ export const SERVICE_RUNTIME_SUPPORT = {
     accountWriteFeatures: ['watched']
   }),
   kodi: support('direct-account', {
+    accountReadFeatures: ['ratings', 'watched', 'watchlist'],
+    accountWriteFeatures: ['ratings', 'watched', 'watchlist']
+  }),
+  plex: support('direct-account', {
     accountReadFeatures: ['ratings', 'watched'],
     accountWriteFeatures: ['ratings', 'watched']
   }),
-  plex: support('direct-account', {
-    accountReadFeatures: ['ratings'],
-    accountWriteFeatures: ['ratings']
-  }),
   anilist: support('restricted'),
-  'douban-movie': support('manual-mapping', { fileReadFeatures: PORTABLE_DATA }),
-  kinopoisk: support('manual-mapping', { fileReadFeatures: PORTABLE_DATA })
+  'douban-movie': support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
+  kinopoisk: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA })
 } satisfies Readonly<Record<ServiceId, ServiceRuntimeSupport>>;
 
 export function getRuntimeSupport(service: ServiceId): ServiceRuntimeSupport {

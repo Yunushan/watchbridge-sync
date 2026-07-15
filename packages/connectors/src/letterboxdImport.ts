@@ -3,6 +3,7 @@ import {
   RATING_SCALES,
   type CanonicalMediaItem,
   type CanonicalRating,
+  type CanonicalReview,
   type CanonicalWatchedEntry,
   type CanonicalWatchlistEntry
 } from '@watchbridge/core';
@@ -10,12 +11,13 @@ import { parseBackupArchive } from './backupSchema.js';
 
 const LETTERBOXD_IMPORT_MAX_BYTES = 1_000_000;
 
-export type LetterboxdImportFeature = 'ratings' | 'watched' | 'watchlist';
+export type LetterboxdImportFeature = 'ratings' | 'watched' | 'watchlist' | 'reviews';
 
 export interface LetterboxdImportSelection {
   ratings?: boolean;
   watched?: boolean;
   watchlist?: boolean;
+  reviews?: boolean;
 }
 
 export interface LetterboxdImportFile {
@@ -33,7 +35,7 @@ function strictSelection(value: unknown): Required<LetterboxdImportSelection> {
     throw new Error('Letterboxd import selection must be an object.');
   }
   const input = value as Record<string, unknown>;
-  const allowed = ['ratings', 'watched', 'watchlist'];
+  const allowed = ['ratings', 'watched', 'watchlist', 'reviews'];
   const unknown = Object.keys(input).find((key) => !allowed.includes(key));
   if (unknown) throw new Error(`Letterboxd import selection.${unknown} is not supported.`);
   for (const key of allowed) {
@@ -44,9 +46,10 @@ function strictSelection(value: unknown): Required<LetterboxdImportSelection> {
   const selection = {
     ratings: input.ratings === true,
     watched: input.watched === true,
-    watchlist: input.watchlist === true
+    watchlist: input.watchlist === true,
+    reviews: input.reviews === true
   };
-  if (!selection.ratings && !selection.watched && !selection.watchlist) {
+  if (!selection.ratings && !selection.watched && !selection.watchlist && !selection.reviews) {
     throw new Error('Select at least one Letterboxd import feature.');
   }
   return selection;
@@ -108,6 +111,20 @@ function watchedRow(entry: CanonicalWatchedEntry): Record<string, string> {
 
 function watchlistRow(entry: CanonicalWatchlistEntry): Record<string, string> {
   return identityColumns(movie(entry.item, 'watchlist'));
+}
+
+function reviewRow(review: CanonicalReview): Record<string, string> {
+  const item = movie(review.item, 'reviews');
+  if (review.spoiler === true) {
+    throw new Error(`Letterboxd review import cannot preserve the spoiler flag for ${item.title}.`);
+  }
+  return {
+    ...identityColumns(item),
+    Rating: review.rating === undefined
+      ? ''
+      : String(convertRating(review.rating.value, review.rating.scale, RATING_SCALES.letterboxd5Half).output),
+    Review: review.body
+  };
 }
 
 function escapeCsv(value: string): string {
@@ -198,6 +215,18 @@ export function generateLetterboxdImportFiles(
       ['imdbID', 'tmdbID', 'Title', 'Year'],
       (backup.watchlist ?? []).map(watchlistRow),
       ['Upload these files through Letterboxd’s watchlist importer and verify every title match before confirmation.']
+    ));
+  }
+  if (selection.reviews) {
+    files.push(...chunkFiles(
+      'reviews',
+      'profile',
+      ['imdbID', 'tmdbID', 'Title', 'Year', 'Rating', 'Review'],
+      (backup.reviews ?? []).map(reviewRow),
+      [
+        'Letterboxd profile imports mark imported reviewed films as watched; verify title matches, review text, and optional ratings before confirmation.',
+        'The documented Letterboxd import format has no review-date or spoiler column, so reviewedAt is not transferred and spoiler-marked reviews are rejected.'
+      ]
     ));
   }
   return files;

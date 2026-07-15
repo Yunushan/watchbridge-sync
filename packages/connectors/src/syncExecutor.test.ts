@@ -1,4 +1,4 @@
-import { getCapabilities, RATING_SCALES, type CanonicalRating, type CanonicalWatchedEntry, type ConnectorCapability, type ServiceId } from '@watchbridge/core';
+import { getCapabilities, RATING_SCALES, type CanonicalRating, type CanonicalReview, type CanonicalWatchedEntry, type ConnectorCapability, type ServiceId } from '@watchbridge/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectorBackup, ConnectorContext, WatchBridgeConnector } from './base.js';
 import { executeSync, SyncExecutionError } from './syncExecutor.js';
@@ -13,6 +13,15 @@ const targetOnlyRating: CanonicalRating = {
   sourceService: 'simkl', value: 9, scale: RATING_SCALES.simkl10
 };
 
+const review: CanonicalReview = {
+  item: rating.item,
+  service: 'letterboxd',
+  body: 'A precise crime epic.',
+  spoiler: false,
+  reviewedAt: '2026-01-01T00:00:00Z',
+  rating: { ...rating, sourceService: 'letterboxd', reviewText: 'A precise crime epic.' }
+};
+
 function connector(service: ServiceId, backup: ConnectorBackup): WatchBridgeConnector & { imported: Array<{ dryRun: boolean; count: number }>; exportBackup: ReturnType<typeof vi.fn> } {
   const imported: Array<{ dryRun: boolean; count: number }> = [];
   return {
@@ -23,7 +32,8 @@ function connector(service: ServiceId, backup: ConnectorBackup): WatchBridgeConn
     exportBackup: vi.fn(async () => backup),
     importRatings: vi.fn(async (entries, dryRun) => { imported.push({ dryRun, count: entries.length }); }),
     importWatched: vi.fn(async (entries, dryRun) => { imported.push({ dryRun, count: entries.length }); }),
-    importWatchlist: vi.fn(async (entries, dryRun) => { imported.push({ dryRun, count: entries.length }); })
+    importWatchlist: vi.fn(async (entries, dryRun) => { imported.push({ dryRun, count: entries.length }); }),
+    importReviews: vi.fn(async (entries, dryRun) => { imported.push({ dryRun, count: entries.length }); })
   };
 }
 
@@ -45,6 +55,24 @@ describe('executeSync', () => {
     expect(result.actions).toEqual([{ feature: 'ratings', status: 'previewed', count: 1, conflicts: 0 }]);
     expect(source.connect).not.toHaveBeenCalled();
     expect(source.exportBackup).not.toHaveBeenCalled();
+  });
+
+  it('executes canonical reviews end to end when a target explicitly registers review writes', async () => {
+    const sourceBackup: ConnectorBackup = {
+      service: 'letterboxd', exportedAt: '2026-01-01T00:00:00Z', reviews: [review]
+    };
+    const source = connector('letterboxd', sourceBackup);
+    const target = connector('trakt', { service: 'trakt', exportedAt: '2026-01-01T00:00:00Z', reviews: [] });
+    target.capabilities = { ...target.capabilities, writeReviews: true };
+
+    const result = await executeSync(
+      { source: 'letterboxd', target: 'trakt', selection: { reviews: true }, dryRun: true },
+      { source, target, sourceContext: context, targetContext: context, sourceBackup }
+    );
+
+    expect(result.operations.map((operation) => operation.type)).toEqual(['read', 'transform', 'write']);
+    expect(target.importReviews).toHaveBeenCalledWith([review], true);
+    expect(result.actions).toEqual([{ feature: 'reviews', status: 'previewed', count: 1, conflicts: 0 }]);
   });
 
   it('previews writes against a target backup without a remote write', async () => {
@@ -150,7 +178,68 @@ describe('executeSync', () => {
       { source, target, sourceContext: context, targetContext: context }
     );
     expect(result.actions).toEqual([expect.objectContaining({ feature: 'ratings', status: 'skipped', count: 0, conflicts: 1 })]);
+    expect(result.conflictDetails).toEqual([{
+      feature: 'ratings',
+      direction: { source: 'trakt', target: 'simkl' },
+      identity: {
+        label: 'Heat', kind: 'movie',
+        sourceIds: [{ provider: 'imdb', value: 'tt0113277' }],
+        targetIds: [{ provider: 'imdb', value: 'tt0113277' }]
+      },
+      source: { state: 'rated', value: '8 on 1–10' },
+      target: { state: 'rated', value: '7 on 1–10' },
+      decision: 'unresolved',
+      reason: 'manual-review-required'
+    }]);
+    expect(result.conflictDetailsTruncated).toBeUndefined();
     expect(target.imported).toEqual([]);
+  });
+
+  it('bounds conflict evidence globally and omits raw reviews and connector credentials', async () => {
+    const sourceReviews: CanonicalReview[] = Array.from({ length: 102 }, (_, index) => ({
+      item: {
+        id: `movie:source:${index}`, kind: 'movie', title: `Private review title ${index}`,
+        externalIds: { imdb: `tt${String(index + 1).padStart(7, '0')}` }
+      },
+      service: 'letterboxd', body: `source private review body ${index}`, spoiler: index % 2 === 0
+    }));
+    const targetReviews: CanonicalReview[] = sourceReviews.map((entry, index) => ({
+      ...entry,
+      service: 'trakt',
+      body: `target private review body ${index}`
+    }));
+    const sourceBackup: ConnectorBackup = {
+      service: 'letterboxd', exportedAt: '2026-01-01T00:00:00Z', reviews: sourceReviews
+    };
+    const source = connector('letterboxd', sourceBackup);
+    const target = connector('trakt', {
+      service: 'trakt', exportedAt: '2026-01-01T00:00:00Z', reviews: targetReviews
+    });
+    target.capabilities = { ...target.capabilities, writeReviews: true };
+
+    const result = await executeSync(
+      { source: 'letterboxd', target: 'trakt', selection: { reviews: true }, dryRun: true, conflictPolicy: 'manual' },
+      {
+        source, target,
+        sourceContext: { accessToken: 'source-secret-token', userAgent: 'test' },
+        targetContext: { accessToken: 'target-secret-token', userAgent: 'test' },
+        sourceBackup
+      }
+    );
+
+    expect(result.conflictDetails).toHaveLength(100);
+    expect(result.conflictDetailsTruncated).toBe(2);
+    expect(result.conflictDetails?.[0]).toMatchObject({
+      feature: 'reviews', decision: 'unresolved', reason: 'manual-review-required',
+      source: { state: 'review (28 characters, spoiler-marked)' },
+      target: { state: 'review (28 characters, spoiler-marked)' }
+    });
+    const serializedEvidence = JSON.stringify({
+      conflictDetails: result.conflictDetails,
+      conflictDetailsTruncated: result.conflictDetailsTruncated
+    });
+    expect(serializedEvidence).not.toContain('private review body');
+    expect(serializedEvidence).not.toContain('secret-token');
   });
 
   it('allows an explicit source-wins policy to replace a conflicting rating', async () => {

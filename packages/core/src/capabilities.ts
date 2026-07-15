@@ -19,6 +19,8 @@ const NONE: Omit<ConnectorCapability, 'apiAuth' | 'integrationMode'> = {
   importReviews: false,
   exportReviews: false,
   readFollowing: false,
+  writeFollowing: false,
+  importFollowing: false,
   readFollowers: false,
   exportFollowing: false,
   exportFollowers: false
@@ -30,11 +32,13 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     readMetadata: true,
     readRatings: true,
     exportRatings: true,
+    readWatched: true,
+    exportWatched: true,
     readWatchlist: true,
     exportWatchlist: true,
     apiAuth: 'none',
     integrationMode: 'official-export',
-    notes: 'Shipped readers accept IMDb ratings/watchlist exports. The portable CSV helper does not imply IMDb account import or a direct account writer.'
+    notes: 'Shipped readers accept IMDb ratings, Check-ins, and watchlist exports. Check-ins become timestamp-free watched membership because their list creation time is not guaranteed to be the actual viewing time. The portable ratings CSV helper does not imply IMDb account import or a direct account writer.'
   },
   'rotten-tomatoes': {
     ...NONE,
@@ -56,6 +60,7 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     importWatchlist: true,
     exportWatchlist: true,
     readReviews: true,
+    importReviews: true,
     exportReviews: true,
     apiAuth: 'unknown',
     integrationMode: 'official-export-import',
@@ -75,6 +80,13 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     apiAuth: 'oauth2',
     integrationMode: 'official-api',
     notes: 'Uses a user-authorized v4 token and account object ID for exports; v3 writes also require a converted session and numeric account ID.'
+  },
+  omdb: {
+    ...NONE,
+    readMetadata: true,
+    apiAuth: 'api-key',
+    integrationMode: 'metadata-only',
+    notes: 'Exact IMDb-ID metadata lookup with a caller-provided OMDb API key. No title search, poster API, account, or user-data path is shipped. OMDb content is CC BY-NC 4.0 and its terms limit use to personal, non-commercial purposes.'
   },
   'tv-time': {
     ...NONE,
@@ -97,10 +109,19 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     writeWatchlist: true,
     importWatchlist: true,
     exportWatchlist: true,
-    readReviews: false,
+    readReviews: true,
+    writeReviews: true,
+    importReviews: true,
+    exportReviews: true,
+    readFollowing: true,
+    writeFollowing: true,
+    importFollowing: true,
+    readFollowers: true,
+    exportFollowing: true,
+    exportFollowers: true,
     apiAuth: 'oauth2',
     integrationMode: 'official-api',
-    notes: 'Official Trakt sync API is the preferred high-fidelity connector.'
+    notes: 'Official Trakt API support for ratings, watched history, watchlist, current-user top-level reviews, following, and followers. Review creation requires exact Trakt IDs and cannot preserve timestamps or attached ratings. Following writes are additive, exact-username verified, and public-profile only; relationship timestamps and profile URLs cannot be written. Followers are always read-only.'
   },
   simkl: {
     ...NONE,
@@ -286,9 +307,13 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     writeWatched: true,
     importWatched: true,
     exportWatched: true,
+    readWatchlist: true,
+    writeWatchlist: true,
+    importWatchlist: true,
+    exportWatchlist: true,
     apiAuth: 'basic',
     integrationMode: 'official-api',
-    notes: 'Kodi Omega JSON-RPC v13.5 support for integer personal userrating and movie/exact-episode playcount in one explicitly scoped library/profile. Watchlist, resume progress, last-played timestamps, aggregate series state, and endpoint-derived identity are unsupported.'
+    notes: 'Kodi Omega JSON-RPC v13.5 support for integer personal userrating, movie/exact-episode playcount, and an additive movie watchlist represented by a WatchBridge-managed tag namespaced to one explicitly scoped library/profile. Favourites are not treated as watchlists. Episode watchlist membership, resume progress, last-played timestamps, aggregate series state, and endpoint-derived identity are unsupported.'
   },
   plex: {
     ...NONE,
@@ -296,9 +321,13 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     writeRatings: true,
     importRatings: true,
     exportRatings: true,
+    readWatched: true,
+    writeWatched: true,
+    importWatched: true,
+    exportWatched: true,
     apiAuth: 'session-token',
     integrationMode: 'official-api',
-    notes: 'Official Plex Media Server API support for personal userRating on one explicitly selected and machine-ID-verified server. Rating keys are server-scoped. Watched state, timeline/scrobble operations, global watchlist, timestamps, and rating deletion are intentionally unsupported.'
+    notes: 'Official Plex Media Server API support for personal userRating plus completed played membership for movies and exact episodes on one explicitly selected and machine-ID-verified server. Rating keys are server-scoped. The provider-discovered scrobble endpoint sets played state without creating view history, so progress, replay counts, timestamps, aggregate show/season state, global watchlist, and rating deletion remain unsupported.'
   },
   anilist: {
     ...NONE,

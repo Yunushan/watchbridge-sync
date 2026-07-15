@@ -4,11 +4,12 @@ import { importProviderFiles, parseProviderFileImportManifest } from './provider
 const exportedAt = '2026-07-15T12:00:00.000Z';
 
 describe('provider file import orchestration', () => {
-  it('converts IMDb ratings and watchlist exports into backup v1', () => {
+  it('converts IMDb ratings, Check-ins, and watchlist exports into backup v1', () => {
     const backup = importProviderFiles({
       service: 'imdb',
       files: {
         ratings: 'Const,YourRating,DateRated,Title,TitleType,Year\ntt0113277,9,2026-01-01,Heat,movie,1995',
+        watched: 'Const,Created,Title,TitleType,Year\ntt0959621,2026-01-03,Pilot,tvEpisode,2008',
         watchlist: 'Const,Created,Title,TitleType,Year\ntt0944947,2026-01-02,Game of Thrones,tvSeries,2011'
       }
     }, exportedAt);
@@ -18,19 +19,21 @@ describe('provider file import orchestration', () => {
       service: 'imdb',
       exportedAt,
       ratings: [{ value: 9, item: { externalIds: { imdb: 'tt0113277' } } }],
+      watched: [{ status: 'watched', item: { kind: 'episode', externalIds: { imdb: 'tt0959621' } } }],
       watchlist: [{ item: { kind: 'tv-show', externalIds: { imdb: 'tt0944947' } } }]
     });
-    expect(backup).not.toHaveProperty('watched');
+    expect(backup.watched?.[0]).not.toHaveProperty('watchedAt');
   });
 
-  it('imports only executable Letterboxd families and never review text', () => {
+  it('imports all executable Letterboxd families including user-owned review text', () => {
     const row = 'Heat,1995,4.5,2026-01-01,https://letterboxd.com/film/heat/,do not include this review';
     const backup = importProviderFiles({
       service: 'letterboxd',
       files: {
         ratings: `Name,Year,Rating,Date,Letterboxd URI,Review\n${row}`,
         watched: 'Name,Year,Date,Letterboxd URI\nHeat,1995,2026-01-01,https://letterboxd.com/film/heat/',
-        watchlist: 'Name,Year,Date,Letterboxd URI\nThief,1981,2026-01-02,https://letterboxd.com/film/thief/'
+        watchlist: 'Name,Year,Date,Letterboxd URI\nThief,1981,2026-01-02,https://letterboxd.com/film/thief/',
+        reviews: `Name,Year,Rating,Date,Letterboxd URI,Review\n${row}`
       }
     }, exportedAt);
 
@@ -39,10 +42,10 @@ describe('provider file import orchestration', () => {
       service: 'letterboxd',
       ratings: [{ value: 4.5 }],
       watched: [{ item: { title: 'Heat' } }],
-      watchlist: [{ item: { title: 'Thief' } }]
+      watchlist: [{ item: { title: 'Thief' } }],
+      reviews: [{ body: 'do not include this review', rating: { value: 4.5 } }]
     });
-    expect(JSON.stringify(backup)).not.toContain('do not include this review');
-    expect(backup).not.toHaveProperty('reviews');
+    expect(backup.reviews).toHaveLength(1);
   });
 
   it('joins the required MovieLens bundle and applies the bounded user filter', () => {

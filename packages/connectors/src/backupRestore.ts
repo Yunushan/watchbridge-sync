@@ -1,5 +1,6 @@
-import type { CanonicalRating, CanonicalWatchedEntry, CanonicalWatchlistEntry } from '@watchbridge/core';
+import type { CanonicalFollow, CanonicalRating, CanonicalReview, CanonicalWatchedEntry, CanonicalWatchlistEntry } from '@watchbridge/core';
 import type { ConnectorBackup, ConnectorContext, WatchBridgeConnector } from './base.js';
+import { createBackupArchive } from './backupSchema.js';
 
 export interface BackupRestoreRequest {
   backup: ConnectorBackup;
@@ -8,7 +9,7 @@ export interface BackupRestoreRequest {
 }
 
 export interface BackupRestoreAction {
-  feature: 'ratings' | 'watched' | 'watchlist';
+  feature: 'ratings' | 'watched' | 'watchlist' | 'reviews' | 'following' | 'followers';
   status: 'previewed' | 'restored' | 'skipped';
   count: number;
   reason?: string;
@@ -46,11 +47,15 @@ export interface BackupRestoreTarget {
 export async function restoreBackup(request: BackupRestoreRequest, target: BackupRestoreTarget): Promise<BackupRestoreResult> {
   if (!request.dryRun && !request.confirmWrite) throw new Error('Set confirmWrite to true before a non-dry-run restore.');
   if (!request.dryRun && !target.persistTargetBackup) throw new Error('A target backup persistence handler is required before a non-dry-run restore.');
+  const sourceBackup = createBackupArchive(request.backup);
+  if (sourceBackup.service !== target.target.service) {
+    throw new Error('Restore must target the service that created the backup; use backup sync for cross-service migration.');
+  }
   await target.target.connect(target.targetContext);
   const targetBackup = await target.target.exportBackup();
   const targetBackupArtifact = request.dryRun ? undefined : await target.persistTargetBackup!(targetBackup);
   const actions: BackupRestoreAction[] = [];
-  type RestoreRecords = CanonicalRating[] | CanonicalWatchedEntry[] | CanonicalWatchlistEntry[];
+  type RestoreRecords = CanonicalRating[] | CanonicalWatchedEntry[] | CanonicalWatchlistEntry[] | CanonicalReview[] | CanonicalFollow[];
   type RestoreImporter = (items: never, dryRun: boolean) => Promise<void>;
   const prepared: Array<{ feature: BackupRestoreAction['feature']; entries: RestoreRecords; importer: RestoreImporter }> = [];
 
@@ -66,9 +71,14 @@ export async function restoreBackup(request: BackupRestoreRequest, target: Backu
     prepared.push({ feature, entries: entries as RestoreRecords, importer: importer as RestoreImporter });
   };
 
-  prepare<CanonicalRating>('ratings', request.backup.ratings, target.target.importRatings?.bind(target.target));
-  prepare<CanonicalWatchedEntry>('watched', request.backup.watched, target.target.importWatched?.bind(target.target));
-  prepare<CanonicalWatchlistEntry>('watchlist', request.backup.watchlist, target.target.importWatchlist?.bind(target.target));
+  prepare<CanonicalRating>('ratings', sourceBackup.ratings, target.target.importRatings?.bind(target.target));
+  prepare<CanonicalWatchedEntry>('watched', sourceBackup.watched, target.target.importWatched?.bind(target.target));
+  prepare<CanonicalWatchlistEntry>('watchlist', sourceBackup.watchlist, target.target.importWatchlist?.bind(target.target));
+  prepare<CanonicalReview>('reviews', sourceBackup.reviews, target.target.importReviews?.bind(target.target));
+  prepare<CanonicalFollow>('following', sourceBackup.following, target.target.importFollowing?.bind(target.target));
+  // A target account cannot make third parties follow it. Followers are
+  // therefore archived/readable but deliberately have no restore importer.
+  prepare<CanonicalFollow>('followers', sourceBackup.followers, undefined);
 
   for (const item of prepared) {
     try {

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { getServiceDefinition, SERVICE_DEFINITIONS, type ConflictPolicy, type ServiceId } from '@watchbridge/core';
 import { BackupDownloadButton } from './BackupDownloadButton.js';
+import { ConflictReview, parseConflictReview } from './ConflictReview.js';
 
 export const MAX_ACCOUNT_SYNC_BYTES = 10 * 1024 * 1024;
 
@@ -67,6 +68,9 @@ interface FeatureSelection {
   ratings: boolean;
   watched: boolean;
   watchlist: boolean;
+  reviews: boolean;
+  following: boolean;
+  followers: boolean;
 }
 
 interface SyncAction {
@@ -92,6 +96,8 @@ export interface AccountSyncResult {
   writeMayBePartial?: unknown;
   retrySafe?: unknown;
   auditWarning?: unknown;
+  conflictDetails?: unknown;
+  conflictDetailsTruncated?: unknown;
 }
 
 export interface AccountSyncFormValues {
@@ -153,7 +159,8 @@ export function buildAccountSyncRequest(values: AccountSyncFormValues): Record<s
     throw new Error('Source and target must use a shipped account connector.');
   }
   if (values.source === values.target) throw new Error('Source and target accounts must be different services.');
-  if (!values.selection.ratings && !values.selection.watched && !values.selection.watchlist) {
+  if (!values.selection.ratings && !values.selection.watched && !values.selection.watchlist
+    && !values.selection.reviews && !values.selection.following && !values.selection.followers) {
     throw new Error('Select at least one feature to sync.');
   }
   if (!values.dryRun && !values.confirmWrite) {
@@ -198,6 +205,12 @@ export async function postAccountSyncJson(
   } catch {
     throw new AccountSyncRequestError(response.ok ? 'The API returned an invalid JSON response.' : `Account sync failed with HTTP ${response.status}.`);
   }
+  try {
+    parseConflictReview(result.conflictDetails, result.conflictDetailsTruncated);
+    if (object(result.job)) parseConflictReview(result.job.conflictDetails, result.job.conflictDetailsTruncated);
+  } catch (cause) {
+    throw new AccountSyncRequestError(cause instanceof Error ? cause.message : 'The API returned invalid conflict review data.');
+  }
   if (!response.ok) {
     throw new AccountSyncRequestError(stringValue(result.error) ?? `Account sync failed with HTTP ${response.status}.`, result);
   }
@@ -206,7 +219,7 @@ export async function postAccountSyncJson(
 
 function BackupCounts({ label, value }: { label: string; value: unknown }) {
   if (!object(value)) return null;
-  return <p>{label}: {arrayLength(value.ratings)} ratings, {arrayLength(value.watched)} watched entries, and {arrayLength(value.watchlist)} watchlist entries.</p>;
+  return <p>{label}: {arrayLength(value.ratings)} ratings, {arrayLength(value.watched)} watched entries, {arrayLength(value.watchlist)} watchlist entries, {arrayLength(value.reviews)} reviews, {arrayLength(value.following)} following relationships, and {arrayLength(value.followers)} follower relationships.</p>;
 }
 
 function directionLabel(value: unknown): string | undefined {
@@ -224,6 +237,10 @@ export function AccountSyncResultDetails({ result, error, apiKey = '' }: { resul
   const failedFeature = stringValue(result.failedFeature) ?? stringValue(job?.failedFeature);
   const failedDirection = directionLabel(result.failedDirection) ?? directionLabel(job?.failedDirection);
   const writeMayBePartial = result.writeMayBePartial === true || job?.writeMayBePartial === true;
+  const conflictReview = parseConflictReview(
+    result.conflictDetails ?? job?.conflictDetails,
+    result.conflictDetailsTruncated ?? job?.conflictDetailsTruncated
+  );
 
   return <div className={error ? 'result-details error-details' : 'result-details success'}>
     <h3>{error ? 'Partial execution details' : 'Account sync result'}</h3>
@@ -240,6 +257,7 @@ export function AccountSyncResultDetails({ result, error, apiKey = '' }: { resul
         {(stringValue(action.reason) ?? stringValue(action.message)) ? ` (${String(stringValue(action.reason) ?? stringValue(action.message))})` : ''}
       </li>)}
     </ul>}
+    <ConflictReview review={conflictReview} />
     <BackupCounts label="Source snapshot" value={result.sourceBackup} />
     <BackupCounts label="Pre-sync target snapshot" value={result.targetBackup} />
     {savedSourceBackupId && <p>Pre-write source backup: <BackupDownloadButton id={savedSourceBackupId} apiKey={apiKey} label={`download ${savedSourceBackupId}`} /></p>}
@@ -250,7 +268,9 @@ export function AccountSyncResultDetails({ result, error, apiKey = '' }: { resul
 export function AccountSyncPanel() {
   const [source, setSource] = useState<AccountService>('tmdb');
   const [target, setTarget] = useState<AccountService>('trakt');
-  const [selection, setSelection] = useState<FeatureSelection>({ ratings: true, watched: true, watchlist: true });
+  const [selection, setSelection] = useState<FeatureSelection>({
+    ratings: true, watched: true, watchlist: true, reviews: false, following: false, followers: false
+  });
   const [conflictPolicy, setConflictPolicy] = useState<ConflictPolicy>('manual');
   const [direction, setDirection] = useState<SyncDirection>('one-way');
   const [dryRun, setDryRun] = useState(true);
@@ -261,9 +281,15 @@ export function AccountSyncPanel() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<AccountSyncResult>();
+  const [approvedPreviewSignature, setApprovedPreviewSignature] = useState<string>();
 
-  const selectedCount = Number(selection.ratings) + Number(selection.watched) + Number(selection.watchlist);
+  const selectedCount = Number(selection.ratings) + Number(selection.watched) + Number(selection.watchlist)
+    + Number(selection.reviews) + Number(selection.following) + Number(selection.followers);
   const sameService = source === target;
+  const syncSignature = JSON.stringify([
+    source, target, selection, conflictPolicy, direction, sourceContextText, targetContextText
+  ]);
+  const previewMatches = approvedPreviewSignature === syncSignature;
 
   function setFeature(feature: keyof FeatureSelection, checked: boolean) {
     setSelection((current) => ({ ...current, [feature]: checked }));
@@ -293,7 +319,18 @@ export function AccountSyncPanel() {
     setSubmitting(true);
     try {
       setResult(await postAccountSyncJson(body, apiKey));
+      if (dryRun) setApprovedPreviewSignature(syncSignature);
+      else {
+        setApprovedPreviewSignature(undefined);
+        setDryRun(true);
+        setConfirmWrite(false);
+      }
     } catch (cause) {
+      if (!dryRun) {
+        setApprovedPreviewSignature(undefined);
+        setDryRun(true);
+        setConfirmWrite(false);
+      }
       if (cause instanceof AccountSyncRequestError) {
         setError(cause.message);
         if (cause.details) setResult(cause.details);
@@ -354,6 +391,9 @@ export function AccountSyncPanel() {
         <label><input type="checkbox" checked={selection.ratings} onChange={(event) => setFeature('ratings', event.target.checked)} /> Ratings</label>
         <label><input type="checkbox" checked={selection.watched} onChange={(event) => setFeature('watched', event.target.checked)} /> Watched history</label>
         <label><input type="checkbox" checked={selection.watchlist} onChange={(event) => setFeature('watchlist', event.target.checked)} /> Watchlist</label>
+        <label><input type="checkbox" checked={selection.reviews} onChange={(event) => setFeature('reviews', event.target.checked)} /> Reviews</label>
+        <label><input type="checkbox" checked={selection.following} onChange={(event) => setFeature('following', event.target.checked)} /> Following</label>
+        <label><input type="checkbox" checked={selection.followers} onChange={(event) => setFeature('followers', event.target.checked)} /> Followers (read-only)</label>
       </div>
     </fieldset>
 
@@ -367,15 +407,16 @@ export function AccountSyncPanel() {
     </div>
 
     <div className="checkbox-row">
-      <label><input type="checkbox" checked={dryRun} onChange={(event) => {
+      <label><input type="checkbox" checked={dryRun} disabled={dryRun && !previewMatches} onChange={(event) => {
         setDryRun(event.target.checked);
         if (event.target.checked) setConfirmWrite(false);
-      }} /> Dry run (recommended)</label>
-      <label><input type="checkbox" checked={confirmWrite} disabled={dryRun} onChange={(event) => setConfirmWrite(event.target.checked)} /> I confirm this remote account write</label>
+      }} /> Dry run (required before a matching write)</label>
+      <label><input type="checkbox" checked={confirmWrite} disabled={dryRun || !previewMatches} onChange={(event) => setConfirmWrite(event.target.checked)} /> I reviewed the matching preview and confirm this remote account write</label>
     </div>
-    {!dryRun && <p className="sensitive-warning">A confirmed write first saves a recoverable target snapshot{direction === 'two-way' ? ' and a source snapshot' : ''}. Review a dry run before continuing.</p>}
+    {!previewMatches && <p className="sensitive-warning">Run a dry-run preview after the latest account, feature, policy, direction, or connector-context change before enabling a confirmed write.</p>}
+    {!dryRun && <p className="sensitive-warning">A confirmed write first saves a recoverable target snapshot{direction === 'two-way' ? ' and a source snapshot' : ''}. The conflict review above is from this exact request.</p>}
 
-    <button type="button" onClick={() => void submit()} disabled={submitting || selectedCount === 0 || sameService || (!dryRun && !confirmWrite)}>
+    <button type="button" onClick={() => void submit()} disabled={submitting || selectedCount === 0 || sameService || (!dryRun && (!previewMatches || !confirmWrite))}>
       {submitting ? 'Running account sync…' : dryRun ? 'Preview account sync' : 'Run confirmed account sync'}
     </button>
 

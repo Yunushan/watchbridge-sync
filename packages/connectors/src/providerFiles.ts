@@ -1,9 +1,10 @@
 import { parseCsv, type CsvRow } from '@watchbridge/core';
 import type { ConnectorBackup } from './base.js';
 import { createBackupArchive, type WatchBridgeBackupArchive } from './backupSchema.js';
-import { parseImdbRatingsCsv, parseImdbWatchlistCsv } from './imdbCsv.js';
+import { parseImdbCheckinsCsv, parseImdbRatingsCsv, parseImdbWatchlistCsv } from './imdbCsv.js';
 import {
   parseLetterboxdRatingsCsv,
+  parseLetterboxdReviewsCsv,
   parseLetterboxdWatchedCsv,
   parseLetterboxdWatchlistCsv
 } from './letterboxdCsv.js';
@@ -15,11 +16,11 @@ const MAX_USER_ID_LENGTH = 128;
 export type ProviderFileImportManifest =
   | {
       service: 'imdb';
-      files: { ratings?: string; watchlist?: string };
+      files: { ratings?: string; watched?: string; watchlist?: string };
     }
   | {
       service: 'letterboxd';
-      files: { ratings?: string; watched?: string; watchlist?: string };
+      files: { ratings?: string; watched?: string; watchlist?: string; reviews?: string };
     }
   | {
       service: 'movielens';
@@ -99,25 +100,29 @@ export function parseProviderFileImportManifest(value: unknown): ProviderFileImp
   const filesInput = object(input.files, 'files');
 
   if (service === 'imdb') {
-    if (!hasOnlyKeys(filesInput, ['ratings', 'watchlist'])) fail('IMDb files contain an unsupported field.');
-    const files = {
-      ratings: file(filesInput.ratings, false),
-      watchlist: file(filesInput.watchlist, false)
-    };
-    if (!files.ratings && !files.watchlist) fail('IMDb requires at least one of files.ratings or files.watchlist.');
-    checkCombinedSize(files);
-    return { service, files };
-  }
-
-  if (service === 'letterboxd') {
-    if (!hasOnlyKeys(filesInput, ['ratings', 'watched', 'watchlist'])) fail('Letterboxd files contain an unsupported field.');
+    if (!hasOnlyKeys(filesInput, ['ratings', 'watched', 'watchlist'])) fail('IMDb files contain an unsupported field.');
     const files = {
       ratings: file(filesInput.ratings, false),
       watched: file(filesInput.watched, false),
       watchlist: file(filesInput.watchlist, false)
     };
     if (!files.ratings && !files.watched && !files.watchlist) {
-      fail('Letterboxd requires at least one of files.ratings, files.watched, or files.watchlist.');
+      fail('IMDb requires at least one of files.ratings, files.watched, or files.watchlist.');
+    }
+    checkCombinedSize(files);
+    return { service, files };
+  }
+
+  if (service === 'letterboxd') {
+    if (!hasOnlyKeys(filesInput, ['ratings', 'watched', 'watchlist', 'reviews'])) fail('Letterboxd files contain an unsupported field.');
+    const files = {
+      ratings: file(filesInput.ratings, false),
+      watched: file(filesInput.watched, false),
+      watchlist: file(filesInput.watchlist, false),
+      reviews: file(filesInput.reviews, false)
+    };
+    if (!files.ratings && !files.watched && !files.watchlist && !files.reviews) {
+      fail('Letterboxd requires at least one of files.ratings, files.watched, files.watchlist, or files.reviews.');
     }
     checkCombinedSize(files);
     return { service, files };
@@ -154,17 +159,23 @@ export function importProviderFiles(value: unknown, exportedAt = new Date().toIS
       const ratingsRows = manifest.files.ratings
         ? inspectCsv(manifest.files.ratings, 'IMDb ratings file', ['Title', 'YourRating'])
         : undefined;
+      const watchedRows = manifest.files.watched
+        ? inspectCsv(manifest.files.watched, 'IMDb Check-ins file', ['Title'])
+        : undefined;
       const watchlistRows = manifest.files.watchlist
         ? inspectCsv(manifest.files.watchlist, 'IMDb watchlist file', ['Title'])
         : undefined;
       const ratings = manifest.files.ratings ? parseImdbRatingsCsv(manifest.files.ratings) : undefined;
+      const watched = manifest.files.watched ? parseImdbCheckinsCsv(manifest.files.watched) : undefined;
       const watchlist = manifest.files.watchlist ? parseImdbWatchlistCsv(manifest.files.watchlist) : undefined;
       if (ratingsRows && ratings) requireRecordsForDataRows('IMDb ratings file', ratingsRows, ratings.length);
+      if (watchedRows && watched) requireRecordsForDataRows('IMDb Check-ins file', watchedRows, watched.length);
       if (watchlistRows && watchlist) requireRecordsForDataRows('IMDb watchlist file', watchlistRows, watchlist.length);
       backup = {
         service: manifest.service,
         exportedAt,
         ...(ratings ? { ratings } : {}),
+        ...(watched ? { watched } : {}),
         ...(watchlist ? { watchlist } : {})
       };
     } else if (manifest.service === 'letterboxd') {
@@ -177,18 +188,24 @@ export function importProviderFiles(value: unknown, exportedAt = new Date().toIS
       const watchlistRows = manifest.files.watchlist
         ? inspectCsv(manifest.files.watchlist, 'Letterboxd watchlist file', ['Name'])
         : undefined;
+      const reviewRows = manifest.files.reviews
+        ? inspectCsv(manifest.files.reviews, 'Letterboxd reviews file', ['Name', 'Review'])
+        : undefined;
       const ratings = manifest.files.ratings ? parseLetterboxdRatingsCsv(manifest.files.ratings) : undefined;
       const watched = manifest.files.watched ? parseLetterboxdWatchedCsv(manifest.files.watched) : undefined;
       const watchlist = manifest.files.watchlist ? parseLetterboxdWatchlistCsv(manifest.files.watchlist) : undefined;
+      const reviews = manifest.files.reviews ? parseLetterboxdReviewsCsv(manifest.files.reviews) : undefined;
       if (ratingsRows && ratings) requireRecordsForDataRows('Letterboxd ratings file', ratingsRows, ratings.length);
       if (watchedRows && watched) requireRecordsForDataRows('Letterboxd watched file', watchedRows, watched.length);
       if (watchlistRows && watchlist) requireRecordsForDataRows('Letterboxd watchlist file', watchlistRows, watchlist.length);
+      if (reviewRows && reviews) requireRecordsForDataRows('Letterboxd reviews file', reviewRows, reviews.length);
       backup = {
         service: manifest.service,
         exportedAt,
         ...(ratings ? { ratings } : {}),
         ...(watched ? { watched } : {}),
-        ...(watchlist ? { watchlist } : {})
+        ...(watchlist ? { watchlist } : {}),
+        ...(reviews ? { reviews } : {})
       };
     } else {
       const ratingsRows = inspectCsv(manifest.files.ratings, 'MovieLens ratings file', ['userId', 'movieId', 'rating']);

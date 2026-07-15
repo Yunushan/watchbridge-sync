@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +18,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   delete process.env.WATCHBRIDGE_BACKUP_DIR;
   delete process.env.WATCHBRIDGE_JOB_DIR;
+  delete process.env.WATCHBRIDGE_BACKUP_RETENTION_DAYS;
+  delete process.env.WATCHBRIDGE_JOB_RETENTION_DAYS;
   delete process.env.WATCHBRIDGE_API_KEY;
   delete process.env.WATCHBRIDGE_STORAGE_KEY;
   delete process.env.WATCHBRIDGE_ALLOW_PLAINTEXT_STORAGE_MIGRATION;
@@ -25,23 +27,198 @@ afterEach(async () => {
   await Promise.all(temporaryBackupDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
+describe('storage retention cleanup', () => {
+  it('previews and deletes expired records while preserving pending jobs and referenced backups', async () => {
+    const backupDirectory = await mkdtemp(join(tmpdir(), 'watchbridge-retention-backups-'));
+    const jobDirectory = await mkdtemp(join(tmpdir(), 'watchbridge-retention-jobs-'));
+    temporaryBackupDirectories.push(backupDirectory, jobDirectory);
+    process.env.WATCHBRIDGE_BACKUP_DIR = backupDirectory;
+    process.env.WATCHBRIDGE_JOB_DIR = jobDirectory;
+    process.env.WATCHBRIDGE_BACKUP_RETENTION_DAYS = '30';
+    process.env.WATCHBRIDGE_JOB_RETENTION_DAYS = '30';
+
+    const pendingJobId = '11111111-1111-4111-8111-111111111111';
+    const expiredJobId = '22222222-2222-4222-8222-222222222222';
+    const referencedBackupId = '33333333-3333-4333-8333-333333333333';
+    const orphanBackupId = '44444444-4444-4444-8444-444444444444';
+    const freshBackupId = '55555555-5555-4555-8555-555555555555';
+    const oldTimestamp = new Date(Date.now() - 40 * 24 * 60 * 60 * 1_000).toISOString();
+    const freshTimestamp = new Date().toISOString();
+    const job = (id: string, status: 'pending' | 'succeeded', updatedAt: string, backupId: string) => ({
+      id,
+      createdAt: updatedAt,
+      updatedAt,
+      status,
+      source: 'trakt',
+      target: 'simkl',
+      direction: 'one-way',
+      dryRun: false,
+      conflictPolicy: 'source-wins',
+      actions: [],
+      targetBackupArtifact: { id: backupId }
+    });
+    await writeFile(join(jobDirectory, `${pendingJobId}.json`), JSON.stringify(job(pendingJobId, 'pending', oldTimestamp, referencedBackupId)));
+    await writeFile(join(jobDirectory, `${expiredJobId}.json`), JSON.stringify(job(expiredJobId, 'succeeded', oldTimestamp, orphanBackupId)));
+    const archive = (id: string) => JSON.stringify({
+      schema: 'watchbridge.backup.v1',
+      service: 'simkl',
+      exportedAt: freshTimestamp,
+      ratings: [],
+      watched: [],
+      watchlist: [],
+      rawFiles: [{ name: `${id}.txt`, content: 'test' }]
+    });
+    for (const id of [referencedBackupId, orphanBackupId, freshBackupId]) {
+      await writeFile(join(backupDirectory, `${id}.json`), archive(id));
+    }
+    const oldDate = new Date(oldTimestamp);
+    await utimes(join(backupDirectory, `${referencedBackupId}.json`), oldDate, oldDate);
+    await utimes(join(backupDirectory, `${orphanBackupId}.json`), oldDate, oldDate);
+
+    const preview = await app.request('/v1/storage/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    });
+    expect(preview.status).toBe(200);
+    await expect(preview.json()).resolves.toMatchObject({
+      dryRun: true,
+      policy: { backupDays: 30, jobDays: 30 },
+      jobs: { scanned: 2, eligible: 1, deleted: 0, retainedPending: 1 },
+      backups: { scanned: 3, eligible: 1, deleted: 0, retainedReferenced: 1 },
+      errors: 0
+    });
+    expect(await readdir(jobDirectory)).toHaveLength(2);
+    expect(await readdir(backupDirectory)).toHaveLength(3);
+
+    const unconfirmed = await app.request('/v1/storage/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dryRun: false })
+    });
+    expect(unconfirmed.status).toBe(400);
+
+    const cleanup = await app.request('/v1/storage/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: false, confirmDelete: true })
+    });
+    expect(cleanup.status).toBe(200);
+    await expect(cleanup.json()).resolves.toMatchObject({
+      dryRun: false,
+      jobs: { eligible: 1, deleted: 1, retainedPending: 1 },
+      backups: { eligible: 1, deleted: 1, retainedReferenced: 1 },
+      errors: 0
+    });
+    expect(await readdir(jobDirectory)).toEqual([`${pendingJobId}.json`]);
+    expect((await readdir(backupDirectory)).sort()).toEqual([
+      `${referencedBackupId}.json`, `${freshBackupId}.json`
+    ].sort());
+  });
+
+  it('fails closed for invalid retention configuration and unknown request fields', async () => {
+    process.env.WATCHBRIDGE_BACKUP_RETENTION_DAYS = '-1';
+    const invalid = await app.request('/v1/storage/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    });
+    expect(invalid.status).toBe(400);
+    await expect(invalid.json()).resolves.toEqual({
+      error: 'WATCHBRIDGE_BACKUP_RETENTION_DAYS must be 0 or a whole number of days.'
+    });
+
+    const unknown = await app.request('/v1/storage/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true })
+    });
+    expect(unknown.status).toBe(400);
+    await expect(unknown.json()).resolves.toEqual({ error: 'Storage cleanup request contains an unknown field.' });
+
+    const malformed = await app.request('/v1/storage/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{'
+    });
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toEqual({ error: 'Malformed JSON request body.' });
+  });
+
+  it('blocks backup deletion when the job inventory cannot be trusted', async () => {
+    const backupDirectory = await mkdtemp(join(tmpdir(), 'watchbridge-retention-guard-backups-'));
+    const jobDirectory = await mkdtemp(join(tmpdir(), 'watchbridge-retention-guard-jobs-'));
+    temporaryBackupDirectories.push(backupDirectory, jobDirectory);
+    process.env.WATCHBRIDGE_BACKUP_DIR = backupDirectory;
+    process.env.WATCHBRIDGE_JOB_DIR = jobDirectory;
+    process.env.WATCHBRIDGE_BACKUP_RETENTION_DAYS = '1';
+    const backupId = '66666666-6666-4666-8666-666666666666';
+    const corruptJobId = '77777777-7777-4777-8777-777777777777';
+    const backupPath = join(backupDirectory, `${backupId}.json`);
+    await writeFile(backupPath, '{}');
+    await writeFile(join(jobDirectory, `${corruptJobId}.json`), '{not-json');
+    const oldDate = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
+    await utimes(backupPath, oldDate, oldDate);
+
+    const response = await app.request('/v1/storage/cleanup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun: false, confirmDelete: true })
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      jobs: { invalid: 1 },
+      backups: { deleted: 0, blockedByJobInventory: true }
+    });
+    expect(await readdir(backupDirectory)).toEqual([`${backupId}.json`]);
+  });
+
+  it('applies configured job retention automatically before creating a new audit job', async () => {
+    const jobDirectory = await mkdtemp(join(tmpdir(), 'watchbridge-retention-automatic-jobs-'));
+    temporaryBackupDirectories.push(jobDirectory);
+    process.env.WATCHBRIDGE_JOB_DIR = jobDirectory;
+    process.env.WATCHBRIDGE_JOB_RETENTION_DAYS = '1';
+    const expiredJobId = '88888888-8888-4888-8888-888888888888';
+    const oldTimestamp = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000).toISOString();
+    await writeFile(join(jobDirectory, `${expiredJobId}.json`), JSON.stringify({
+      id: expiredJobId,
+      createdAt: oldTimestamp,
+      updatedAt: oldTimestamp,
+      status: 'succeeded',
+      source: 'trakt',
+      target: 'simkl',
+      direction: 'one-way',
+      dryRun: true,
+      conflictPolicy: 'manual',
+      actions: []
+    }));
+    vi.stubGlobal('fetch', vi.fn(emptyAccountExportFetch));
+
+    const response = await app.request('/v1/sync/execute', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'trakt', target: 'simkl', selection: { ratings: true }, dryRun: true,
+        sourceContext: { accessToken: 'trakt-token', apiKey: 'trakt-key', baseUrl: 'https://trakt.test' },
+        targetContext: { accessToken: 'simkl-token', apiKey: 'simkl-key', baseUrl: 'https://simkl.test' }
+      })
+    });
+    expect(response.status).toBe(200);
+    const names = await readdir(jobDirectory);
+    expect(names).toHaveLength(1);
+    expect(names).not.toContain(`${expiredJobId}.json`);
+  });
+});
+
 describe('mapped CSV import endpoint', () => {
   it('returns canonical records for a valid manual export map', async () => {
     const response = await app.request('/v1/import/mapped-csv', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        csv: 'Title,Rating,Seen\nHeat,8,2026-01-01',
+        csv: 'Title,Rating,Seen,Following,Follower\nHeat,8,2026-01-01,,\n,,,cinephile,friend',
         config: {
           service: 'serializd',
           ratingScale: { min: 1, max: 10, step: 1, name: 'Test' },
-          columns: { title: 'Title', rating: 'Rating', watchedAt: 'Seen' }
+          columns: {
+            title: 'Title', rating: 'Rating', watchedAt: 'Seen',
+            followingUsername: 'Following', followerUsername: 'Follower'
+          }
         }
       })
     });
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       ratings: [{ value: 8, item: { title: 'Heat' } }],
-      watched: [{ watchedAt: '2026-01-01' }]
+      watched: [{ watchedAt: '2026-01-01' }],
+      following: [{ username: 'cinephile', direction: 'following' }],
+      followers: [{ username: 'friend', direction: 'follower' }]
     });
   });
 
@@ -133,6 +310,26 @@ describe('provider file import endpoint', () => {
     expect(response.status).toBe(200);
     const backup = await response.json() as { ratings: unknown[] };
     expect(backup.ratings).toHaveLength(1);
+  });
+
+  it('returns canonical Letterboxd reviews without posting them to a provider', async () => {
+    const response = await app.request('/v1/import/provider-files', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service: 'letterboxd',
+        files: {
+          reviews: 'Name,Year,Rating,Date,Letterboxd URI,Review\nHeat,1995,4.5,2026-01-01,https://letterboxd.com/film/heat/,Great film'
+        }
+      })
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      schema: 'watchbridge.backup.v1',
+      service: 'letterboxd',
+      reviews: [{ body: 'Great film', rating: { value: 4.5 } }]
+    });
   });
 
   it('returns sanitized 400 responses for strict-shape and content failures', async () => {
@@ -330,12 +527,13 @@ describe('API access gate', () => {
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     await expect(response.json()).resolves.toMatchObject({
       platforms: {
-        selectable: { supported: 34, percent: 100, missingPercent: 0 },
-        directAccount: { supported: 11, percent: 32.4, missingPercent: 67.6 },
-        fullThreeFeatureDirect: { supported: 5, percent: 14.7 },
-        allModelFeaturesDirect: { supported: 0, missingPercent: 100 }
+        selectable: { supported: 35, percent: 100, missingPercent: 0 },
+        directAccount: { supported: 11, percent: 31.4, missingPercent: 68.6 },
+        fullThreeFeatureDirect: { supported: 6, percent: 17.1 },
+        allModelFeaturesDirect: { supported: 1, percent: 2.9, missingPercent: 97.1, services: ['trakt'] }
       },
-      featureSlots: { automatedTarget: { supported: 28, total: 102, percent: 27.5, missingPercent: 72.5 } },
+      featureFamilies: { executable: { supported: 6, total: 6, percent: 100, missingPercent: 0 } },
+      featureSlots: { automatedTarget: { supported: 33, total: 210, percent: 15.7, missingPercent: 84.3 } },
       directions: { executable: { supported: 2, total: 2, percent: 100, missingPercent: 0 } }
     });
   });
@@ -838,6 +1036,32 @@ describe('metadata resolution endpoint', () => {
     await expect(response.json()).resolves.toMatchObject({ matches: [{ externalIds: { tmdbMovie: 949 } }] });
   });
 
+  it('resolves OMDb metadata only by exact IMDb ID with a request-scoped API key', async () => {
+    const remoteFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      expect(`${url.origin}${url.pathname}`).toBe('https://www.omdbapi.com/');
+      expect([...url.searchParams.keys()].sort()).toEqual(['apikey', 'i', 'r']);
+      expect(url.searchParams.get('apikey')).toBe('omdb-key');
+      expect(url.searchParams.get('i')).toBe('tt0113277');
+      expect(new Headers(init?.headers).get('Accept')).toBe('application/json');
+      return Response.json({ Title: 'Heat', Year: '1995', imdbID: 'tt0113277', Type: 'movie', Response: 'True' });
+    });
+    vi.stubGlobal('fetch', remoteFetch);
+    const response = await app.request('/v1/metadata/resolve', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service: 'omdb',
+        item: { id: 'imdb:tt0113277', kind: 'movie', title: 'Heat', year: 1995, externalIds: { imdb: 'tt0113277' } },
+        context: { apiKey: 'omdb-key' }
+      })
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      matches: [{ id: 'omdb:movie:tt0113277', kind: 'movie', title: 'Heat', year: 1995, externalIds: { imdb: 'tt0113277' } }]
+    });
+    expect(remoteFetch).toHaveBeenCalledOnce();
+  });
+
   it('rejects custom provider URLs when they are not exactly opted in', async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
@@ -1173,6 +1397,83 @@ describe('sync execution endpoint', () => {
     });
   });
 
+  it('persists bounded canonical conflict review without connector credentials', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'watchbridge-conflict-review-'));
+    temporaryBackupDirectories.push(directory);
+    process.env.WATCHBRIDGE_JOB_DIR = directory;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/users/settings')) return Response.json({ account: { type: 'free' } });
+      if (url.includes('/sync/all-items/movies')) return Response.json({
+        movies: [{
+          status: 'completed', user_rating: 7, user_rated_at: '2026-01-02T00:00:00Z',
+          movie: { title: 'Heat', year: 1995, ids: { simkl: 1, imdb: 'tt0113277', tmdb: '949' } }
+        }]
+      });
+      if (url.includes('/sync/all-items/shows')) return Response.json({ shows: [] });
+      if (url.includes('/sync/all-items/anime')) return Response.json({ anime: [] });
+      throw new Error(`Unexpected test URL: ${url}`);
+    }));
+    const response = await app.request('/v1/sync/from-backup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        backup: {
+          schema: 'watchbridge.backup.v1', service: 'serializd', exportedAt: '2026-07-15T00:00:00Z',
+          ratings: [{
+            item: { id: 'serializd:heat', kind: 'movie', title: 'Heat', year: 1995, externalIds: { imdb: 'tt0113277' } },
+            sourceService: 'serializd', value: 8, scale: { min: 1, max: 10, step: 1, name: 'Ten point' },
+            ratedAt: '2026-01-01T00:00:00Z'
+          }]
+        },
+        target: 'simkl', selection: { ratings: true }, dryRun: true, conflictPolicy: 'manual',
+        targetContext: {
+          accessToken: 'target-private-token', apiKey: 'target-private-key', baseUrl: 'https://simkl-conflict.test'
+        }
+      })
+    });
+    expect(response.status).toBe(200);
+    const result = await response.json() as {
+      conflictDetails: unknown[];
+      conflictDetailsTruncated?: number;
+      job: { id: string };
+    };
+    expect(result.conflictDetails).toEqual([expect.objectContaining({
+      feature: 'ratings', direction: { source: 'serializd', target: 'simkl' },
+      identity: expect.objectContaining({ label: 'Heat (1995)', sourceIds: [{ provider: 'imdb', value: 'tt0113277' }] }),
+      decision: 'unresolved', reason: 'manual-review-required'
+    })]);
+    expect(result.conflictDetailsTruncated).toBeUndefined();
+    const jobResponse = await app.request(`/v1/sync/jobs/${result.job.id}`);
+    expect(jobResponse.status).toBe(200);
+    await expect(jobResponse.json()).resolves.toMatchObject({
+      conflictDetails: result.conflictDetails,
+      status: 'succeeded'
+    });
+    const stored = await readFile(join(directory, `${result.job.id}.json`), 'utf8');
+    expect(stored).not.toContain('target-private-token');
+    expect(stored).not.toContain('target-private-key');
+  });
+
+  it('rejects durable jobs whose conflict summaries contain unknown or sensitive-shaped fields', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'watchbridge-invalid-conflict-review-'));
+    temporaryBackupDirectories.push(directory);
+    process.env.WATCHBRIDGE_JOB_DIR = directory;
+    const id = '11111111-1111-4111-8111-111111111111';
+    await writeFile(join(directory, `${id}.json`), JSON.stringify({
+      id, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', status: 'succeeded',
+      source: 'trakt', target: 'simkl', direction: 'one-way', dryRun: true, conflictPolicy: 'manual', actions: [],
+      conflictDetails: [{
+        feature: 'ratings', direction: { source: 'trakt', target: 'simkl' },
+        identity: { label: 'Heat', kind: 'movie', sourceIds: [], targetIds: [] },
+        source: { state: 'rated', accessToken: 'must-never-be-persisted' },
+        target: { state: 'rated' }, decision: 'unresolved', reason: 'manual-review-required'
+      }]
+    }));
+    const response = await app.request(`/v1/sync/jobs/${id}`);
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: 'Unknown sync job.' });
+  });
+
   it('rejects unversioned or internally inconsistent uploaded backups', async () => {
     const response = await app.request('/v1/sync/from-backup', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1309,7 +1610,7 @@ describe('sync execution endpoint', () => {
     expect(job.status).toBe(200);
     await expect(job.json()).resolves.toMatchObject({ source: 'trakt', target: 'simkl', dryRun: true, status: 'succeeded' });
     await expect((await app.request('/v1/sync/jobs')).json()).resolves.toMatchObject({ jobs: [{ id: result.job.id }] });
-    expect(remoteFetch).toHaveBeenCalledTimes(10);
+    expect(remoteFetch).toHaveBeenCalledTimes(13);
   });
 
   it('runs and durably audits a directional two-way dry run', async () => {

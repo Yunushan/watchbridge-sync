@@ -2,10 +2,13 @@ import {
   SERVICE_BY_ID,
   isPlexRatingKey,
   isPlexServerId,
+  mediaItemsMatch,
   plexGuidMatchesMediaKind,
   plexGuidMediaType,
+  type CanonicalFollow,
   type CanonicalMediaItem,
   type CanonicalRating,
+  type CanonicalReview,
   type CanonicalWatchedEntry,
   type CanonicalWatchlistEntry,
   type ExternalIds,
@@ -268,6 +271,79 @@ function watchlist(value: unknown, label: string): CanonicalWatchlistEntry {
   };
 }
 
+function review(value: unknown, label: string): CanonicalReview {
+  const input = strictRecord(value, label, ['item', 'service', 'body', 'rating', 'spoiler', 'reviewedAt']);
+  const item = mediaItem(input.item, `${label}.item`);
+  const reviewService = service(input.service, `${label}.service`);
+  const body = requiredString(input.body, `${label}.body`, 100_000);
+  const attachedRating = input.rating === undefined ? undefined : rating(input.rating, `${label}.rating`);
+  if (attachedRating && attachedRating.sourceService !== reviewService) {
+    throw new Error(`${label}.rating.sourceService must match ${label}.service.`);
+  }
+  if (attachedRating && !mediaItemsMatch(item, attachedRating.item)) {
+    throw new Error(`${label}.rating.item must identify the same media item as ${label}.item.`);
+  }
+  if (attachedRating?.reviewText !== undefined && attachedRating.reviewText !== body) {
+    throw new Error(`${label}.rating.reviewText must match ${label}.body when supplied.`);
+  }
+  if (input.spoiler !== undefined && typeof input.spoiler !== 'boolean') {
+    throw new Error(`${label}.spoiler must be a boolean.`);
+  }
+  return {
+    item,
+    service: reviewService,
+    body,
+    ...(attachedRating ? { rating: attachedRating } : {}),
+    ...(input.spoiler !== undefined ? { spoiler: input.spoiler } : {}),
+    ...(date(input.reviewedAt, `${label}.reviewedAt`) ? { reviewedAt: input.reviewedAt as string } : {})
+  };
+}
+
+function follow(value: unknown, label: string): CanonicalFollow {
+  const input = strictRecord(value, label, [
+    'service', 'username', 'displayName', 'profileUrl', 'direction', 'followedAt'
+  ]);
+  const username = requiredString(input.username, `${label}.username`, 500);
+  if (username !== username.trim() || /[\u0000-\u001f\u007f]/.test(username)) {
+    throw new Error(`${label}.username cannot have surrounding whitespace or control characters.`);
+  }
+  const direction = requiredString(input.direction, `${label}.direction`, 20);
+  if (direction !== 'following' && direction !== 'follower') {
+    throw new Error(`${label}.direction must be following or follower.`);
+  }
+  const profileUrl = optionalString(input.profileUrl, `${label}.profileUrl`, 2_048);
+  if (profileUrl !== undefined) {
+    let parsed: URL;
+    try {
+      parsed = new URL(profileUrl);
+    } catch {
+      throw new Error(`${label}.profileUrl must be an absolute HTTPS URL.`);
+    }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+      throw new Error(`${label}.profileUrl must be an absolute HTTPS URL without credentials.`);
+    }
+  }
+  const followedAt = date(input.followedAt, `${label}.followedAt`);
+  return {
+    service: service(input.service, `${label}.service`),
+    username,
+    ...(optionalString(input.displayName, `${label}.displayName`, 2_000) ? { displayName: input.displayName as string } : {}),
+    ...(profileUrl !== undefined ? { profileUrl } : {}),
+    direction,
+    ...(followedAt !== undefined ? { followedAt } : {})
+  };
+}
+
+function ensureUniqueSocial(entries: CanonicalFollow[] | undefined, label: string): void {
+  if (!entries) return;
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    const key = `${entry.service}\u0000${entry.direction}\u0000${entry.username.toLocaleLowerCase('en-US')}`;
+    if (seen.has(key)) throw new Error(`${label} contains a duplicate provider-scoped username.`);
+    seen.add(key);
+  }
+}
+
 function array<T>(value: unknown, label: string, parse: (entry: unknown, label: string) => T): T[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
@@ -277,7 +353,7 @@ function array<T>(value: unknown, label: string, parse: (entry: unknown, label: 
 
 export function parseBackupArchive(value: unknown): WatchBridgeBackupArchive {
   const input = strictRecord(value, 'backup', [
-    'schema', 'service', 'exportedAt', 'ratings', 'watched', 'watchlist', 'rawFiles'
+    'schema', 'service', 'exportedAt', 'ratings', 'watched', 'watchlist', 'reviews', 'following', 'followers', 'rawFiles'
   ]);
   if (input.schema !== WATCHBRIDGE_BACKUP_SCHEMA) throw new Error(`backup.schema must be ${WATCHBRIDGE_BACKUP_SCHEMA}.`);
   const backupService = service(input.service, 'backup.service');
@@ -286,9 +362,21 @@ export function parseBackupArchive(value: unknown): WatchBridgeBackupArchive {
   const ratings = array(input.ratings, 'backup.ratings', rating);
   let watchedEntries = array(input.watched, 'backup.watched', watched);
   const watchlistEntries = array(input.watchlist, 'backup.watchlist', watchlist);
+  const reviews = array(input.reviews, 'backup.reviews', review);
+  const followingEntries = array(input.following, 'backup.following', follow);
+  const followerEntries = array(input.followers, 'backup.followers', follow);
   if (ratings?.some((entry) => entry.sourceService !== backupService)) throw new Error('Every backup rating must use backup.service as sourceService.');
   if (watchedEntries?.some((entry) => entry.service !== backupService)) throw new Error('Every watched entry must use backup.service as service.');
   if (watchlistEntries?.some((entry) => entry.service !== backupService)) throw new Error('Every watchlist entry must use backup.service as service.');
+  if (reviews?.some((entry) => entry.service !== backupService)) throw new Error('Every review must use backup.service as service.');
+  if (followingEntries?.some((entry) => entry.service !== backupService || entry.direction !== 'following')) {
+    throw new Error('Every following entry must use backup.service and direction following.');
+  }
+  if (followerEntries?.some((entry) => entry.service !== backupService || entry.direction !== 'follower')) {
+    throw new Error('Every followers entry must use backup.service and direction follower.');
+  }
+  ensureUniqueSocial(followingEntries, 'backup.following');
+  ensureUniqueSocial(followerEntries, 'backup.followers');
   // Legacy v1 MAL exports used `plays` exclusively for episode/chapter position.
   // Current MAL exports always include explicit `progress`, which makes this
   // MAL-only migration deterministic without reinterpreting another service.
@@ -321,6 +409,9 @@ export function parseBackupArchive(value: unknown): WatchBridgeBackupArchive {
     ...(ratings ? { ratings } : {}),
     ...(watchedEntries ? { watched: watchedEntries } : {}),
     ...(watchlistEntries ? { watchlist: watchlistEntries } : {}),
+    ...(reviews ? { reviews } : {}),
+    ...(followingEntries ? { following: followingEntries } : {}),
+    ...(followerEntries ? { followers: followerEntries } : {}),
     ...(rawFiles ? { rawFiles } : {})
   };
 }

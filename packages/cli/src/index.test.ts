@@ -28,7 +28,8 @@ describe('WatchBridge CLI', () => {
     const io = makeIo({});
     await run(['services'], io);
     const services = JSON.parse(io.lines[0]);
-    expect(services).toHaveLength(34);
+    expect(services).toHaveLength(35);
+    expect(services).toContainEqual(expect.objectContaining({ id: 'omdb', readiness: 'metadata-only' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'trakt', readiness: 'implemented' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'bangumi', readiness: 'implemented' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'shikimori', readiness: 'implemented' }));
@@ -43,29 +44,35 @@ describe('WatchBridge CLI', () => {
     await run(['support-summary'], io);
     expect(JSON.parse(io.lines[0])).toMatchObject({
       platforms: {
-        selectable: { supported: 34, total: 34, percent: 100, missingPercent: 0 },
-        directAccount: { supported: 11, percent: 32.4, missingPercent: 67.6 },
-        fullThreeFeatureDirect: { supported: 5, percent: 14.7 },
-        allModelFeaturesDirect: { supported: 0, missingPercent: 100 }
+        selectable: { supported: 35, total: 35, percent: 100, missingPercent: 0 },
+        directAccount: { supported: 11, percent: 31.4, missingPercent: 68.6 },
+        fullThreeFeatureDirect: { supported: 6, percent: 17.1 },
+        allModelFeaturesDirect: { supported: 1, percent: 2.9, missingPercent: 97.1, services: ['trakt'] }
       },
-      featureSlots: { automatedTarget: { supported: 28, total: 102, percent: 27.5, missingPercent: 72.5 } },
+      featureFamilies: { executable: { supported: 6, total: 6, percent: 100, missingPercent: 0 } },
+      featureSlots: { automatedTarget: { supported: 33, total: 210, percent: 15.7, missingPercent: 84.3 } },
       directions: { executable: { supported: 2, total: 2, percent: 100, missingPercent: 0 } }
     });
   });
 
   it('imports a mapped user-owned CSV file', async () => {
     const io = makeIo({
-      'export.csv': 'Name,Score,Seen\nHeat,8,2026-01-01',
+      'export.csv': 'Name,Score,Seen,Following,Follower\nHeat,8,2026-01-01,,\n,,,cinephile,friend',
       'mapping.json': JSON.stringify({
         service: 'serializd',
         ratingScale: { min: 1, max: 10, step: 1, name: 'Ten point' },
-        columns: { title: 'Name', rating: 'Score', watchedAt: 'Seen' }
+        columns: {
+          title: 'Name', rating: 'Score', watchedAt: 'Seen',
+          followingUsername: 'Following', followerUsername: 'Follower'
+        }
       })
     });
     await run(['import-mapped-csv', 'export.csv', 'mapping.json'], io);
     expect(JSON.parse(io.lines[0])).toMatchObject({
       ratings: [{ value: 8, item: { title: 'Heat' } }],
-      watched: [{ watchedAt: '2026-01-01' }]
+      watched: [{ watchedAt: '2026-01-01' }],
+      following: [{ username: 'cinephile', direction: 'following' }],
+      followers: [{ username: 'friend', direction: 'follower' }]
     });
   });
 
@@ -73,9 +80,10 @@ describe('WatchBridge CLI', () => {
     const io = makeIo({
       'provider.json': JSON.stringify({
         service: 'imdb',
-        files: { ratings: 'ratings.csv', watchlist: 'watchlist.csv' }
+        files: { ratings: 'ratings.csv', watched: 'checkins.csv', watchlist: 'watchlist.csv' }
       }),
       'ratings.csv': 'Const,YourRating,DateRated,Title,TitleType,Year\ntt0113277,9,2026-01-01,Heat,movie,1995',
+      'checkins.csv': 'Const,Created,Title,TitleType,Year\ntt0959621,2026-01-03,Pilot,tvEpisode,2008',
       'watchlist.csv': 'Const,Created,Title,TitleType,Year\ntt0944947,2026-01-02,Game of Thrones,tvSeries,2011'
     });
 
@@ -85,10 +93,28 @@ describe('WatchBridge CLI', () => {
       schema: 'watchbridge.backup.v1',
       service: 'imdb',
       ratings: [{ value: 9, item: { title: 'Heat' } }],
+      watched: [{ status: 'watched', item: { title: 'Pilot', kind: 'episode' } }],
       watchlist: [{ item: { title: 'Game of Thrones' } }]
     });
     expect(io.readText).toHaveBeenCalledWith('ratings.csv');
+    expect(io.readText).toHaveBeenCalledWith('checkins.csv');
     expect(io.readText).toHaveBeenCalledWith('watchlist.csv');
+  });
+
+  it('loads a Letterboxd reviews path into the canonical review archive', async () => {
+    const io = makeIo({
+      'provider.json': JSON.stringify({ service: 'letterboxd', files: { reviews: 'reviews.csv' } }),
+      'reviews.csv': 'Name,Year,Rating,Date,Letterboxd URI,Review\nHeat,1995,4.5,2026-01-01,https://letterboxd.com/film/heat/,Great film'
+    });
+
+    await run(['import-provider-files', 'provider.json'], io);
+
+    expect(JSON.parse(io.lines[0])).toMatchObject({
+      schema: 'watchbridge.backup.v1',
+      service: 'letterboxd',
+      reviews: [{ body: 'Great film', rating: { value: 4.5 } }]
+    });
+    expect(io.readText).toHaveBeenCalledWith('reviews.csv');
   });
 
   it('loads and joins the required MovieLens path bundle without network access', async () => {
@@ -296,6 +322,26 @@ describe('WatchBridge CLI', () => {
     await run(['restore-backup', '11111111-1111-4111-8111-111111111111', 'restore.json'], io);
     expect(url).toBe('http://localhost:8080/v1/backups/11111111-1111-4111-8111-111111111111/restore');
     expect(JSON.parse(io.lines[0])).toMatchObject({ actions: [{ status: 'previewed' }] });
+  });
+
+  it('previews or confirms guarded storage cleanup through the API', async () => {
+    const io = makeIo({ 'cleanup.json': JSON.stringify({ dryRun: true }) });
+    let captured: Request | undefined;
+    io.fetch = async (input, init) => {
+      captured = new Request(input, init);
+      return new Response(JSON.stringify({ dryRun: true, jobs: { eligible: 2 }, backups: { eligible: 1 } }));
+    };
+
+    await run(['cleanup-storage', 'cleanup.json', 'https://watchbridge.example/base/'], io);
+
+    expect(captured?.url).toBe('https://watchbridge.example/v1/storage/cleanup');
+    expect(captured?.method).toBe('POST');
+    expect(await captured?.json()).toEqual({ dryRun: true });
+    expect(JSON.parse(io.lines[0])).toMatchObject({ dryRun: true, jobs: { eligible: 2 } });
+
+    const helpIo = makeIo({});
+    await run([], helpIo);
+    expect(helpIo.lines[0]).toContain('watchbridge cleanup-storage cleanup-request.json [http://localhost:8080]');
   });
 
   it.each([

@@ -1,11 +1,11 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { canConvertRatingBetweenServices, convertBetweenServices, getCapabilities, getRuntimeSupportSummary, isPlexRatingKey, isPlexServerId, plexGuidMatchesMediaKind, plexGuidMediaType, SERVICE_BY_ID, SERVICE_DEFINITIONS, planSync, type CanonicalMediaItem, type ConflictPolicy, type ExternalIds, type MediaKind, type ServiceId, type SyncSelection } from '@watchbridge/core';
-import { BackupRestoreError, createBackupArchive, createMetadataConnector, createOfficialConnector, executeSync, generateLetterboxdImportFiles, importProviderFiles, parseBackupArchive, parseMappedCsv, parseMappedCsvImportConfig, restoreBackup, SyncExecutionError, type ConnectorBackup, type ConnectorContext, type WatchBridgeConnector } from '@watchbridge/connectors';
+import { BackupRestoreError, createBackupArchive, createMetadataConnector, createOfficialConnector, executeSync, generateLetterboxdImportFiles, importProviderFiles, MAX_SYNC_CONFLICT_DETAILS, parseBackupArchive, parseMappedCsv, parseMappedCsvImportConfig, restoreBackup, SyncExecutionError, type ConnectorBackup, type ConnectorContext, type WatchBridgeConnector } from '@watchbridge/connectors';
 import {
   createTmdbV3Session,
   exchangeAnnictOAuth,
@@ -702,6 +702,77 @@ function jobDirectory(): string {
   return process.env.WATCHBRIDGE_JOB_DIR ?? join(process.cwd(), '.watchbridge-jobs');
 }
 
+const STORAGE_RETENTION_MAX_DAYS = 36_500;
+const STORAGE_CLEANUP_INTERVAL_MS = 60 * 60 * 1_000;
+
+interface StorageRetentionPolicy {
+  backupDays?: number;
+  jobDays?: number;
+}
+
+interface StorageCleanupSummary {
+  dryRun: boolean;
+  policy: StorageRetentionPolicy;
+  jobs: { scanned: number; eligible: number; deleted: number; retainedPending: number; invalid: number };
+  backups: {
+    scanned: number;
+    eligible: number;
+    deleted: number;
+    retainedReferenced: number;
+    invalid: number;
+    blockedByJobInventory: boolean;
+  };
+  errors: number;
+}
+
+function retentionDays(name: 'WATCHBRIDGE_BACKUP_RETENTION_DAYS' | 'WATCHBRIDGE_JOB_RETENTION_DAYS'): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (!raw || raw === '0') return undefined;
+  if (!/^\d+$/.test(raw)) throw new Error(`${name} must be 0 or a whole number of days.`);
+  const days = Number(raw);
+  if (!Number.isSafeInteger(days) || days < 1 || days > STORAGE_RETENTION_MAX_DAYS) {
+    throw new Error(`${name} must be between 1 and ${STORAGE_RETENTION_MAX_DAYS}, or 0 to disable cleanup.`);
+  }
+  return days;
+}
+
+function storageRetentionPolicy(): StorageRetentionPolicy {
+  const backupDays = retentionDays('WATCHBRIDGE_BACKUP_RETENTION_DAYS');
+  const jobDays = retentionDays('WATCHBRIDGE_JOB_RETENTION_DAYS');
+  return {
+    ...(backupDays !== undefined ? { backupDays } : {}),
+    ...(jobDays !== undefined ? { jobDays } : {})
+  };
+}
+
+async function storedRecordIds(directory: string): Promise<{ ids: string[]; invalid: number; error: boolean }> {
+  try {
+    const names = await readdir(directory);
+    const ids: string[] = [];
+    let invalid = 0;
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      const id = name.slice(0, -5);
+      if (isBackupId(id) && name === `${id}.json`) ids.push(id);
+      else invalid += 1;
+    }
+    return { ids, invalid, error: false };
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+    return { ids: [], invalid: 0, error: code !== 'ENOENT' };
+  }
+}
+
+async function removeEligibleStorageFile(path: string, dryRun: boolean): Promise<'eligible' | 'deleted' | 'error'> {
+  if (dryRun) return 'eligible';
+  try {
+    await unlink(path);
+    return 'deleted';
+  } catch {
+    return 'error';
+  }
+}
+
 async function writeStorageFileAtomically(finalPath: string, id: string, contents: string): Promise<void> {
   const directory = dirname(finalPath);
   await mkdir(directory, { recursive: true });
@@ -738,6 +809,80 @@ interface SyncJobRecord {
   failedFeature?: string;
   failedDirection?: { source: ServiceId; target: ServiceId };
   writeMayBePartial?: boolean;
+  conflictDetails?: unknown[];
+  conflictDetailsTruncated?: number;
+}
+
+const conflictFeatures = new Set(syncFeatures);
+const conflictIdentityKinds = new Set(['movie', 'tv-show', 'season', 'episode', 'anime', 'manga', 'profile']);
+const conflictIdProviders = new Set([
+  'imdb', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
+  'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby',
+  'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk',
+  'movielens', 'letterboxdSlug'
+]);
+const conflictDecisions = new Set(['source', 'target', 'unchanged', 'unresolved']);
+const conflictReasons = new Map([
+  ['manual-review-required', 'unresolved'],
+  ['source-wins-policy', 'source'],
+  ['target-wins-policy', 'target'],
+  ['newest-source', 'source'],
+  ['newest-target', 'target'],
+  ['newest-tie', 'unchanged'],
+  ['equivalent-state', 'unchanged'],
+  ['membership-already-present', 'unchanged']
+]);
+
+function boundedStoredText(value: unknown, maximum: number): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= maximum
+    && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function validStoredConflictIds(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > conflictIdProviders.size) return false;
+  const seen = new Set<string>();
+  return value.every((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
+    const id = candidate as Record<string, unknown>;
+    if (!containsOnlyKeys(id, ['provider', 'value'])) return false;
+    if (typeof id.provider !== 'string' || !conflictIdProviders.has(id.provider)
+      || !boundedStoredText(id.value, 500) || seen.has(id.provider)) return false;
+    seen.add(id.provider);
+    return true;
+  });
+}
+
+function validStoredConflictIdentity(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const identity = value as Record<string, unknown>;
+  if (!containsOnlyKeys(identity, ['label', 'kind', 'sourceIds', 'targetIds', 'service', 'username'])) return false;
+  if (!boundedStoredText(identity.label, 300) || typeof identity.kind !== 'string' || !conflictIdentityKinds.has(identity.kind)) return false;
+  if (!validStoredConflictIds(identity.sourceIds) || !validStoredConflictIds(identity.targetIds)) return false;
+  if (identity.kind === 'profile') {
+    const service = serviceId(identity.service);
+    return Boolean(service) && boundedStoredText(identity.username, 500)
+      && (identity.sourceIds as unknown[]).length === 0 && (identity.targetIds as unknown[]).length === 0;
+  }
+  return identity.service === undefined && identity.username === undefined;
+}
+
+function validStoredConflictSide(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const side = value as Record<string, unknown>;
+  if (!containsOnlyKeys(side, ['timestamp', 'state', 'value']) || !boundedStoredText(side.state, 500)) return false;
+  if (side.value !== undefined && !boundedStoredText(side.value, 500)) return false;
+  return side.timestamp === undefined || validStoredJobTimestamp(side.timestamp);
+}
+
+function validStoredConflictDetail(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const detail = value as Record<string, unknown>;
+  if (!containsOnlyKeys(detail, ['feature', 'direction', 'identity', 'source', 'target', 'decision', 'reason'])) return false;
+  if (typeof detail.feature !== 'string' || !conflictFeatures.has(detail.feature as typeof syncFeatures[number])) return false;
+  if (!storedDirection(detail.direction) || !validStoredConflictIdentity(detail.identity)
+    || !validStoredConflictSide(detail.source) || !validStoredConflictSide(detail.target)) return false;
+  if (typeof detail.decision !== 'string' || !conflictDecisions.has(detail.decision)) return false;
+  return typeof detail.reason === 'string' && conflictReasons.get(detail.reason) === detail.decision;
 }
 
 function storedDirection(value: unknown): { source: ServiceId; target: ServiceId } | undefined {
@@ -772,7 +917,8 @@ function parseStoredSyncJob(value: unknown, expectedId: string): SyncJobRecord |
   const record = value as Record<string, unknown>;
   if (!containsOnlyKeys(record, [
     'id', 'createdAt', 'updatedAt', 'status', 'source', 'target', 'direction', 'dryRun', 'conflictPolicy', 'actions',
-    'sourceBackupArtifact', 'targetBackupArtifact', 'error', 'failedFeature', 'failedDirection', 'writeMayBePartial'
+    'sourceBackupArtifact', 'targetBackupArtifact', 'error', 'failedFeature', 'failedDirection', 'writeMayBePartial',
+    'conflictDetails', 'conflictDetailsTruncated'
   ])) return undefined;
   if (record.id !== expectedId || !isBackupId(expectedId)) return undefined;
   if (!validStoredJobTimestamp(record.createdAt)) return undefined;
@@ -789,6 +935,18 @@ function parseStoredSyncJob(value: unknown, expectedId: string): SyncJobRecord |
   const failedDirection = record.failedDirection === undefined ? undefined : storedDirection(record.failedDirection);
   if (record.failedDirection !== undefined && !failedDirection) return undefined;
   if (record.writeMayBePartial !== undefined && typeof record.writeMayBePartial !== 'boolean') return undefined;
+  if (record.conflictDetails !== undefined && (!Array.isArray(record.conflictDetails)
+    || record.conflictDetails.length === 0
+    || record.conflictDetails.length > MAX_SYNC_CONFLICT_DETAILS
+    || !record.conflictDetails.every(validStoredConflictDetail))) return undefined;
+  if (record.conflictDetailsTruncated !== undefined && (
+    typeof record.conflictDetailsTruncated !== 'number'
+    || !Number.isSafeInteger(record.conflictDetailsTruncated)
+    || record.conflictDetailsTruncated <= 0
+    || record.conflictDetailsTruncated > 600_000
+    || !Array.isArray(record.conflictDetails)
+    || record.conflictDetails.length !== MAX_SYNC_CONFLICT_DETAILS
+  )) return undefined;
   let sourceBackupArtifact: { id: string } | undefined;
   if (record.sourceBackupArtifact !== undefined) {
     if (!record.sourceBackupArtifact || typeof record.sourceBackupArtifact !== 'object' || Array.isArray(record.sourceBackupArtifact)) return undefined;
@@ -819,7 +977,9 @@ function parseStoredSyncJob(value: unknown, expectedId: string): SyncJobRecord |
     ...(typeof record.error === 'string' ? { error: record.error } : {}),
     ...(typeof record.failedFeature === 'string' ? { failedFeature: record.failedFeature } : {}),
     ...(failedDirection ? { failedDirection } : {}),
-    ...(typeof record.writeMayBePartial === 'boolean' ? { writeMayBePartial: record.writeMayBePartial } : {})
+    ...(typeof record.writeMayBePartial === 'boolean' ? { writeMayBePartial: record.writeMayBePartial } : {}),
+    ...(Array.isArray(record.conflictDetails) ? { conflictDetails: record.conflictDetails } : {}),
+    ...(typeof record.conflictDetailsTruncated === 'number' ? { conflictDetailsTruncated: record.conflictDetailsTruncated } : {})
   };
 }
 
@@ -841,6 +1001,7 @@ async function writeSyncJob(record: SyncJobRecord): Promise<void> {
 async function createSyncJob(
   job: Pick<SyncJobRecord, 'source' | 'target' | 'dryRun' | 'conflictPolicy'> & Partial<Pick<SyncJobRecord, 'direction'>>
 ): Promise<SyncJobRecord> {
+  await maybeCleanupStorage();
   const timestamp = new Date().toISOString();
   const record: SyncJobRecord = {
     id: randomUUID(),
@@ -865,7 +1026,9 @@ async function completeSyncJob(
   job: SyncJobRecord,
   actions: unknown,
   targetBackupArtifact?: { id: string },
-  sourceBackupArtifact?: { id: string }
+  sourceBackupArtifact?: { id: string },
+  conflictDetails?: unknown[],
+  conflictDetailsTruncated?: number
 ): Promise<{ job: SyncJobRecord; auditWarning?: string; retrySafe?: boolean }> {
   try {
     return {
@@ -873,7 +1036,9 @@ async function completeSyncJob(
         status: 'succeeded',
         actions,
         ...(sourceBackupArtifact ? { sourceBackupArtifact } : {}),
-        ...(targetBackupArtifact ? { targetBackupArtifact } : {})
+        ...(targetBackupArtifact ? { targetBackupArtifact } : {}),
+        ...(conflictDetails ? { conflictDetails } : {}),
+        ...(conflictDetailsTruncated ? { conflictDetailsTruncated } : {})
       })
     };
   } catch {
@@ -913,7 +1078,13 @@ async function failSyncJob(
     ...(partialResult && 'sourceBackupArtifact' in partialResult && partialResult.sourceBackupArtifact
       ? { sourceBackupArtifact: partialResult.sourceBackupArtifact }
       : {}),
-    ...(partialResult?.targetBackupArtifact ? { targetBackupArtifact: partialResult.targetBackupArtifact } : {})
+    ...(partialResult?.targetBackupArtifact ? { targetBackupArtifact: partialResult.targetBackupArtifact } : {}),
+    ...(partialResult && 'conflictDetails' in partialResult && partialResult.conflictDetails
+      ? { conflictDetails: partialResult.conflictDetails }
+      : {}),
+    ...(partialResult && 'conflictDetailsTruncated' in partialResult && partialResult.conflictDetailsTruncated
+      ? { conflictDetailsTruncated: partialResult.conflictDetailsTruncated }
+      : {})
   };
   try {
     return {
@@ -958,7 +1129,104 @@ async function listSyncJobs(): Promise<SyncJobRecord[]> {
   }
 }
 
+async function cleanupStorage(dryRun: boolean, now = Date.now()): Promise<StorageCleanupSummary> {
+  const policy = storageRetentionPolicy();
+  const summary: StorageCleanupSummary = {
+    dryRun,
+    policy,
+    jobs: { scanned: 0, eligible: 0, deleted: 0, retainedPending: 0, invalid: 0 },
+    backups: { scanned: 0, eligible: 0, deleted: 0, retainedReferenced: 0, invalid: 0, blockedByJobInventory: false },
+    errors: 0
+  };
+
+  const jobFiles = await storedRecordIds(jobDirectory());
+  summary.jobs.scanned = jobFiles.ids.length;
+  summary.jobs.invalid = jobFiles.invalid;
+  if (jobFiles.error) summary.errors += 1;
+  const retainedJobs: SyncJobRecord[] = [];
+  const jobCutoff = policy.jobDays === undefined ? undefined : now - policy.jobDays * 24 * 60 * 60 * 1_000;
+  for (const id of jobFiles.ids) {
+    const record = await readSyncJob(id);
+    if (!record) {
+      summary.jobs.invalid += 1;
+      continue;
+    }
+    if (record.status === 'pending') {
+      summary.jobs.retainedPending += 1;
+      retainedJobs.push(record);
+      continue;
+    }
+    if (jobCutoff !== undefined && Date.parse(record.updatedAt) < jobCutoff) {
+      summary.jobs.eligible += 1;
+      const result = await removeEligibleStorageFile(join(jobDirectory(), `${id}.json`), dryRun);
+      if (result === 'deleted') summary.jobs.deleted += 1;
+      if (result === 'error') {
+        summary.errors += 1;
+        retainedJobs.push(record);
+      }
+      continue;
+    }
+    retainedJobs.push(record);
+  }
+
+  const referencedBackups = new Set(retainedJobs.flatMap((job) => [
+    job.sourceBackupArtifact?.id,
+    job.targetBackupArtifact?.id
+  ].filter((id): id is string => Boolean(id))));
+  const backupFiles = await storedRecordIds(backupDirectory());
+  summary.backups.scanned = backupFiles.ids.length;
+  summary.backups.invalid = backupFiles.invalid;
+  if (backupFiles.error) summary.errors += 1;
+  summary.backups.blockedByJobInventory = jobFiles.error || summary.jobs.invalid > 0;
+  const backupCutoff = policy.backupDays === undefined ? undefined : now - policy.backupDays * 24 * 60 * 60 * 1_000;
+  for (const id of backupFiles.ids) {
+    if (referencedBackups.has(id)) {
+      summary.backups.retainedReferenced += 1;
+      continue;
+    }
+    if (backupCutoff === undefined || summary.backups.blockedByJobInventory) continue;
+    const path = join(backupDirectory(), `${id}.json`);
+    try {
+      const metadata = await stat(path);
+      if (!metadata.isFile()) {
+        summary.backups.invalid += 1;
+        continue;
+      }
+      if (metadata.mtimeMs >= backupCutoff) continue;
+    } catch {
+      summary.errors += 1;
+      continue;
+    }
+    summary.backups.eligible += 1;
+    const result = await removeEligibleStorageFile(path, dryRun);
+    if (result === 'deleted') summary.backups.deleted += 1;
+    if (result === 'error') summary.errors += 1;
+  }
+  return summary;
+}
+
+let automaticCleanup: Promise<StorageCleanupSummary> | undefined;
+let lastAutomaticCleanupAt = 0;
+let lastAutomaticCleanupKey = '';
+
+async function maybeCleanupStorage(): Promise<void> {
+  const policy = storageRetentionPolicy();
+  if (policy.backupDays === undefined && policy.jobDays === undefined) return;
+  const key = `${backupDirectory()}\n${jobDirectory()}\n${policy.backupDays ?? 0}\n${policy.jobDays ?? 0}`;
+  const now = Date.now();
+  if (key === lastAutomaticCleanupKey && now - lastAutomaticCleanupAt < STORAGE_CLEANUP_INTERVAL_MS) return;
+  if (!automaticCleanup) {
+    automaticCleanup = cleanupStorage(false, now).finally(() => {
+      automaticCleanup = undefined;
+    });
+  }
+  await automaticCleanup;
+  lastAutomaticCleanupKey = key;
+  lastAutomaticCleanupAt = now;
+}
+
 async function persistBackup(backup: ConnectorBackup): Promise<{ id: string }> {
+  await maybeCleanupStorage();
   const id = randomUUID();
   const plaintext = JSON.stringify(createBackupArchive(backup), null, 2);
   await writeStorageFileAtomically(
@@ -1066,6 +1334,28 @@ app.get('/v1/sync/jobs/:id', async (c) => {
   return job ? c.json(job) : c.json({ error: 'Unknown sync job.' }, 404);
 });
 
+app.post('/v1/storage/cleanup', async (c) => {
+  const body = await c.req.json<Record<string, unknown>>();
+  if (!containsOnlyKeys(body, ['dryRun', 'confirmDelete'])) {
+    return c.json({ error: 'Storage cleanup request contains an unknown field.' }, 400);
+  }
+  if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
+    return c.json({ error: 'dryRun must be a boolean.' }, 400);
+  }
+  if (body.confirmDelete !== undefined && typeof body.confirmDelete !== 'boolean') {
+    return c.json({ error: 'confirmDelete must be a boolean.' }, 400);
+  }
+  const dryRun = body.dryRun !== false;
+  if (!dryRun && body.confirmDelete !== true) {
+    return c.json({ error: 'Non-dry-run cleanup requires confirmDelete: true.' }, 400);
+  }
+  try {
+    return c.json(await cleanupStorage(dryRun));
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Storage cleanup configuration is invalid.' }, 400);
+  }
+});
+
 app.post('/v1/sync/execute', async (c) => {
   const body = await c.req.json<Record<string, unknown>>();
   if (!containsOnlyKeys(body, ['source', 'target', 'selection', 'dryRun', 'confirmWrite', 'direction', 'conflictPolicy', 'sourceContext', 'targetContext'])) {
@@ -1129,7 +1419,9 @@ app.post('/v1/sync/execute', async (c) => {
       pendingJob,
       result.actions,
       result.targetBackupArtifact,
-      result.sourceBackupArtifact
+      result.sourceBackupArtifact,
+      result.conflictDetails,
+      result.conflictDetailsTruncated
     );
     return c.json({ ...result, ...completion });
   } catch (error) {
@@ -1203,7 +1495,14 @@ app.post('/v1/sync/from-backup', async (c) => {
       sourceBackup: backup,
       persistTargetBackup: persistBackup
     });
-    const completion = await completeSyncJob(pendingJob, result.actions, result.targetBackupArtifact);
+    const completion = await completeSyncJob(
+      pendingJob,
+      result.actions,
+      result.targetBackupArtifact,
+      undefined,
+      result.conflictDetails,
+      result.conflictDetailsTruncated
+    );
     return c.json({ ...result, ...completion });
   } catch (error) {
     const failure = await failSyncJob(pendingJob, error, 'Backup sync execution failed.');
@@ -1328,6 +1627,7 @@ const port = Number(process.env.WATCHBRIDGE_PORT ?? 8080);
 if (process.env.NODE_ENV === 'production' && !process.env.WATCHBRIDGE_API_KEY) {
   throw new Error('WATCHBRIDGE_API_KEY is required when running the API in production.');
 }
+if (process.env.NODE_ENV === 'production') storageRetentionPolicy();
 if (process.env.NODE_ENV !== 'test') {
   serve({ fetch: app.fetch, port });
   console.log(`WatchBridge API listening on http://localhost:${port}`);

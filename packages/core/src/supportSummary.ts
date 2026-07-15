@@ -3,6 +3,7 @@ import { SERVICE_DEFINITIONS } from './services.js';
 import type { ServiceId } from './types.js';
 
 const MODEL_SYNC_FEATURES = ['ratings', 'watched', 'watchlist', 'reviews', 'following', 'followers'] as const;
+const ACCOUNT_WRITABLE_MODEL_FEATURES = ['ratings', 'watched', 'watchlist', 'reviews', 'following'] as const;
 
 export interface SupportMetric {
   supported: number;
@@ -17,11 +18,12 @@ export interface RuntimeSupportSummary {
   platforms: {
     selectable: SupportMetric;
     directAccount: SupportMetric;
-    /** Platforms registering account read/write methods for all three executable families; not a universal cross-service compatibility claim. */
+    /** Platforms registering account read/write methods for ratings, watched state, and watchlist. */
     fullThreeFeatureDirect: SupportMetric;
     anyLocalSourcePath: SupportMetric;
     metadataOrRecommendations: SupportMetric;
     restricted: SupportMetric;
+    /** Platforms reading all six families and writing every mutable family; followers are read-only by design. */
     allModelFeaturesDirect: SupportMetric;
   };
   featureFamilies: {
@@ -63,7 +65,7 @@ function metric(supported: number, total: number, services?: ServiceId[]): Suppo
 }
 
 function hasEveryFeature(features: readonly ExecutableSyncFeature[]): boolean {
-  return EXECUTABLE_SYNC_FEATURES.every((feature) => features.includes(feature));
+  return (['ratings', 'watched', 'watchlist'] as const).every((feature) => features.includes(feature));
 }
 
 /**
@@ -79,6 +81,11 @@ export function getRuntimeSupportSummary(): RuntimeSupportSummary {
     service.runtime.workflow === 'direct-account'
     && hasEveryFeature(service.runtime.accountReadFeatures)
     && hasEveryFeature(service.runtime.accountWriteFeatures)
+  ).map((service) => service.id);
+  const allModelFeaturesDirect = SERVICE_DEFINITIONS.filter((service) =>
+    service.runtime.workflow === 'direct-account'
+    && MODEL_SYNC_FEATURES.every((feature) => service.runtime.accountReadFeatures.includes(feature))
+    && ACCOUNT_WRITABLE_MODEL_FEATURES.every((feature) => service.runtime.accountWriteFeatures.includes(feature))
   ).map((service) => service.id);
   const anyLocalSourcePath = SERVICE_DEFINITIONS.filter((service) =>
     service.runtime.accountReadFeatures.length > 0 || service.runtime.fileReadFeatures.length > 0
@@ -131,7 +138,7 @@ export function getRuntimeSupportSummary(): RuntimeSupportSummary {
       anyLocalSourcePath: metric(anyLocalSourcePath.length, totalPlatforms, anyLocalSourcePath),
       metadataOrRecommendations: metric(metadataOrRecommendations.length, totalPlatforms, metadataOrRecommendations),
       restricted: metric(restricted.length, totalPlatforms, restricted),
-      allModelFeaturesDirect: metric(0, totalPlatforms, [])
+      allModelFeaturesDirect: metric(allModelFeaturesDirect.length, totalPlatforms, allModelFeaturesDirect)
     },
     featureFamilies: {
       executable: metric(EXECUTABLE_SYNC_FEATURES.length, MODEL_SYNC_FEATURES.length),

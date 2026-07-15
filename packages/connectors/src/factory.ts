@@ -6,6 +6,7 @@ import { EmbyConnector } from './emby.js';
 import { JellyfinConnector } from './jellyfin.js';
 import { KodiConnector } from './kodi.js';
 import { KitsuConnector } from './kitsu.js';
+import { OmdbConnector } from './omdb.js';
 import { PlexConnector } from './plex.js';
 import { MyAnimeListConnector } from './myanimelist.js';
 import { ShikimoriConnector } from './shikimori.js';
@@ -41,6 +42,7 @@ export function createOfficialConnector(service: ServiceId): WatchBridgeConnecto
 export function createMetadataConnector(service: ServiceId): WatchBridgeConnector | undefined {
   switch (service) {
     case 'tmdb': return new TmdbConnector();
+    case 'omdb': return new OmdbConnector();
     case 'tvmaze': return new TvMazeConnector();
     case 'thetvdb': return new TheTvdbConnector();
     case 'kitsu': return new KitsuConnector();

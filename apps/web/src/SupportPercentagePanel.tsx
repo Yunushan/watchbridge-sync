@@ -22,7 +22,10 @@ export function SupportPercentagePanel() {
   const featureLabels = {
     ratings: 'Ratings',
     watched: 'Watched / progress',
-    watchlist: 'Watchlist'
+    watchlist: 'Watchlist',
+    reviews: 'Reviews',
+    following: 'Following',
+    followers: 'Followers'
   } as const;
 
   return <section className="card support-panel">
@@ -37,10 +40,12 @@ export function SupportPercentagePanel() {
     <dl className="support-grid">
       <PercentageMetric label="Selectable platforms" metric={summary.platforms.selectable} detail="platforms" gapLabel="not selectable" />
       <PercentageMetric label="Direct-account platforms" metric={summary.platforms.directAccount} detail="platforms" gapLabel="without direct account sync" />
-      <PercentageMetric label="Registered three-feature direct methods" metric={summary.platforms.fullThreeFeatureDirect} detail="platforms" gapLabel="without all three registered account method families" />
-      <PercentageMetric label="Readable source feature slots" metric={summary.featureSlots.sourceRead} detail="rating/watched/watchlist slots" gapLabel="source slots missing" />
-      <PercentageMetric label="Verified account-write feature slots" metric={summary.featureSlots.accountWrite} detail="rating/watched/watchlist slots" gapLabel="account-write slots missing" />
-      <PercentageMetric label="Automated target feature slots" metric={summary.featureSlots.automatedTarget} detail="rating/watched/watchlist slots" gapLabel="target slots missing" />
+      <PercentageMetric label="Executable canonical families" metric={summary.featureFamilies.executable} detail="data families" gapLabel="model-only families" />
+      <PercentageMetric label="Primary three-family direct methods" metric={summary.platforms.fullThreeFeatureDirect} detail="platforms" gapLabel="without ratings, watched, and watchlist methods" />
+      <PercentageMetric label="Registered all-family direct coverage" metric={summary.platforms.allModelFeaturesDirect} detail="platforms" gapLabel="without all readable and mutable family methods" />
+      <PercentageMetric label="Readable source feature slots" metric={summary.featureSlots.sourceRead} detail="executable-family slots" gapLabel="source slots missing" />
+      <PercentageMetric label="Verified account-write feature slots" metric={summary.featureSlots.accountWrite} detail="executable-family slots" gapLabel="account-write slots missing" />
+      <PercentageMetric label="Automated target feature slots" metric={summary.featureSlots.automatedTarget} detail="executable-family slots" gapLabel="target slots missing" />
     </dl>
     <div className="support-table-wrap">
       <table className="support-feature-table">
@@ -63,6 +68,6 @@ export function SupportPercentagePanel() {
         </tbody>
       </table>
     </div>
-    <p className="support-footnote">The automated-target denominator is the live platform catalog × 3 executable data families. Registered methods do not imply universal pair, identifier, or field-fidelity compatibility. Reviews, following, followers, and full repeated-play event history are not counted as shipped execution; one-way and capability-gated two-way executor modes are shipped.</p>
+    <p className="support-footnote">The denominator is the live platform catalog × all six canonical data families. Registered methods do not imply universal pair, identifier, or field-fidelity compatibility. Account writes are counted only for verified provider methods; file readers and user-controlled target files remain separate. Followers are intrinsically read-only in the shipped model, and full repeated-play event history is outside these membership/state percentages.</p>
   </section>;
 }

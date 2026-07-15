@@ -1,4 +1,4 @@
-import { RATING_SCALES, type CanonicalRating } from '@watchbridge/core';
+import { RATING_SCALES, type CanonicalRating, type CanonicalWatchedEntry } from '@watchbridge/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectorContext, WatchBridgeConnector } from './base.js';
 import { createBackupArchive } from './backupSchema.js';
@@ -54,7 +54,8 @@ function providers(directories: unknown[] = [], overrides: Record<string, unknow
         Feature: [
           { type: 'content', key: '/library/sections', Directory: directories },
           { type: 'metadata', key: '/library/metadata' },
-          { type: 'rate', key: '/:/rate' }
+          { type: 'rate', key: '/:/rate' },
+          { type: 'timeline', key: '/:/timeline', scrobbleKey: '/:/scrobble', unscrobbleKey: '/:/unscrobble' }
         ]
       }],
       ...overrides
@@ -174,6 +175,10 @@ function rating(item: CanonicalRating['item'] = canonicalMovie(), value = 9): Ca
   return { item, sourceService: 'plex', value, scale: RATING_SCALES.plex10 };
 }
 
+function watched(item: CanonicalRating['item'] = canonicalMovie()): CanonicalWatchedEntry {
+  return { item, service: 'plex', status: 'watched' };
+}
+
 describe('PlexConnector', () => {
   it('uses the account JWT only for official cloud discovery, prefers local HTTPS, and attests the server and provider', async () => {
     const calls: Array<{ url: URL; init: RequestInit }> = [];
@@ -229,7 +234,21 @@ describe('PlexConnector', () => {
           Feature: [
             { type: 'content', key: '/library/sections', Directory: [] },
             { type: 'metadata', key: 'https://attacker.invalid/library/metadata' },
-            { type: 'rate', key: '/:/rate' }
+            { type: 'rate', key: '/:/rate' },
+            { type: 'timeline', key: '/:/timeline', scrobbleKey: '/:/scrobble' }
+          ]
+        }]
+      })
+    }))).rejects.toThrow('verified Plex server origin');
+    await expect(connect(standardFetch({
+      providerResponse: providers([], {
+        MediaProvider: [{
+          identifier: 'com.plexapp.plugins.library',
+          Feature: [
+            { type: 'content', key: '/library/sections', Directory: [] },
+            { type: 'metadata', key: '/library/metadata' },
+            { type: 'rate', key: '/:/rate' },
+            { type: 'timeline', key: '/:/timeline', scrobbleKey: 'https://attacker.invalid/:/scrobble' }
           ]
         }]
       })
@@ -238,11 +257,11 @@ describe('PlexConnector', () => {
 
   it('paginates discovered libraries and exports exact movie, show, season, and episode ratings with scoped IDs', async () => {
     const listCalls: Array<{ url: URL; init: RequestInit }> = [];
-    const movieOne = metadata('movie', 'movie-1', { userRating: 0 });
+    const movieOne = metadata('movie', 'movie-1', { userRating: 0, viewCount: 1 });
     const movieTwo = metadata('movie', 'movie-2');
-    const show = metadata('show', 'show-1', { userRating: 7 });
-    const season = metadata('season', 'season-1', { userRating: 6 });
-    const episode = metadata('episode', 'episode-1', { userRating: 8.5 });
+    const show = metadata('show', 'show-1', { userRating: 7, viewCount: 1 });
+    const season = metadata('season', 'season-1', { userRating: 6, viewCount: 1 });
+    const episode = metadata('episode', 'episode-1', { userRating: 8.5, viewCount: 2 });
     const fetch = standardFetch({
       providerResponse: providers([directory('movie', 1), directory('show', 2)]),
       route: (url, init) => {
@@ -259,7 +278,6 @@ describe('PlexConnector', () => {
     });
     const backup = await (await connect(fetch)).exportBackup();
 
-    expect(backup).not.toHaveProperty('watched');
     expect(backup).not.toHaveProperty('watchlist');
     expect(backup.ratings).toHaveLength(4);
     expect(backup.ratings?.map((entry) => [entry.item.kind, entry.value])).toEqual([
@@ -279,8 +297,14 @@ describe('PlexConnector', () => {
     expect(backup.ratings?.find((entry) => entry.item.kind === 'episode')?.item).toMatchObject({
       seasonNumber: 1, episodeNumber: 1, externalIds: { tvdb: 400 }
     });
+    expect(backup.watched).toHaveLength(2);
+    expect(backup.watched?.map((entry) => [entry.item.kind, entry.status])).toEqual([
+      ['movie', 'watched'], ['episode', 'watched']
+    ]);
+    expect(backup.watched?.[0]).not.toHaveProperty('plays');
+    expect(backup.watched?.[0]).not.toHaveProperty('watchedAt');
     expect(createBackupArchive(backup)).toMatchObject({
-      schema: 'watchbridge.backup.v1', service: 'plex', ratings: backup.ratings
+      schema: 'watchbridge.backup.v1', service: 'plex', ratings: backup.ratings, watched: backup.watched
     });
     for (const { init } of listCalls) {
       const headers = new Headers(init.headers);
@@ -302,6 +326,9 @@ describe('PlexConnector', () => {
     await expect(exportPage(page([metadata('movie', 'movie-1', { guid: 'plex://show/wrong' })]))).rejects.toThrow('movie GUID');
     await expect(exportPage(page([metadata('movie', 'movie-1', { userRating: null })]))).rejects.toThrow('0-10 range');
     await expect(exportPage(page([metadata('movie', 'movie-1', { userRating: 9.95 })]))).rejects.toThrow('0.1 step');
+    await expect(exportPage(page([metadata('movie', 'movie-1', { viewCount: null })]))).rejects.toThrow('viewCount');
+    await expect(exportPage(page([metadata('movie', 'movie-1', { viewCount: -1 })]))).rejects.toThrow('viewCount');
+    await expect(exportPage(page([metadata('movie', 'movie-1', { viewCount: 1.5 })]))).rejects.toThrow('viewCount');
     await expect(exportPage(page([metadata('movie', 'movie-1', { Guid: [{ id: 'tmdb://901' }, { id: 'tmdb://902' }] })])))
       .rejects.toThrow('conflicting TMDb');
   });
@@ -406,7 +433,133 @@ describe('PlexConnector', () => {
     expect(failedPuts).toBe(1);
   });
 
-  it('exposes a ratings-only official API surface', async () => {
+  it('accepts only exact completed movie/episode membership and validates the whole watched batch before mutation', async () => {
+    const initial = metadata('movie', 'movie-1', { viewCount: 0 });
+    let puts = 0;
+    const fetch = standardFetch({
+      providerResponse: providers([directory('movie', 1)]),
+      route: (url, init) => {
+        if (init.method === 'PUT') puts += 1;
+        if (url.pathname === '/library/sections/1/all') return page([initial]);
+        return json({}, 404);
+      }
+    });
+    const connector = await connect(fetch);
+    await expect(connector.importWatched([{ ...watched(), status: 'rewatched' }], false)).rejects.toThrow('must be watched');
+    await expect(connector.importWatched([{ ...watched(), progress: 100 }], false)).rejects.toThrow('progress');
+    await expect(connector.importWatched([{ ...watched(), plays: 1 }], false)).rejects.toThrow('without creating view history');
+    await expect(connector.importWatched([{ ...watched(), watchedAt: '2026-01-01T00:00:00Z' }], false)).rejects.toThrow('watchedAt');
+    await expect(connector.importWatched([watched({
+      ...canonicalMovie(), kind: 'tv-show', externalIds: { plex: 'show-1', plexServer: SERVER_ID, plexGuid: 'plex://show/show-1-global' }
+    })], false)).rejects.toThrow('movie or exact episode');
+    await expect(connector.importWatched([watched(), watched({
+      id: 'missing', kind: 'movie', title: 'Missing', externalIds: { imdb: 'tt9999999' }
+    })], false)).rejects.toThrow('resolved to 0');
+    expect(puts).toBe(0);
+  });
+
+  it('rereads every played-state target before the first PUT and aborts the whole batch on drift', async () => {
+    const first = metadata('movie', 'movie-1', { viewCount: 0 });
+    const second = metadata('movie', 'movie-2', { viewCount: 0 });
+    let puts = 0;
+    const fetch = standardFetch({
+      providerResponse: providers([directory('movie', 1)]),
+      route: (url, init) => {
+        if (url.pathname === '/library/sections/1/all') return page([first, second]);
+        if (url.pathname === '/library/metadata/movie-1') return page([first]);
+        if (url.pathname === '/library/metadata/movie-2') return page([metadata('movie', 'movie-2', { viewCount: 1 })]);
+        if (init.method === 'PUT') puts += 1;
+        return json({}, 404);
+      }
+    });
+    const secondItem = canonicalMovie('movie-2', {
+      title: 'Movie 2', year: 1997,
+      externalIds: {
+        plex: 'movie-2', plexServer: SERVER_ID, plexGuid: 'plex://movie/movie-2-global',
+        imdb: 'tt0000002', tmdbMovie: 902
+      }
+    });
+    await expect((await connect(fetch)).importWatched([watched(), watched(secondItem)], false))
+      .rejects.toThrow('movie-2 changed after preflight');
+    expect(puts).toBe(0);
+  });
+
+  it('sends one non-retried PUT to the discovered scrobble endpoint and verifies played membership', async () => {
+    const initial = metadata('movie', 'movie-1', { viewCount: 0 });
+    let puts = 0;
+    let mutated = false;
+    const fetch = standardFetch({
+      providerResponse: providers([directory('movie', 1)]),
+      route: (url, init) => {
+        if (url.pathname === '/library/sections/1/all') return page([initial]);
+        if (url.pathname === '/library/metadata/movie-1') {
+          return page([metadata('movie', 'movie-1', { viewCount: mutated ? 1 : 0 })]);
+        }
+        if (url.pathname === '/:/scrobble' && init.method === 'PUT') {
+          puts += 1;
+          mutated = true;
+          expect(url.searchParams.get('identifier')).toBe('com.plexapp.plugins.library');
+          expect(url.searchParams.get('key')).toBe('movie-1');
+          expect(init.body).toBeUndefined();
+          expect(new Headers(init.headers).get('X-Plex-Token')).toBe(SERVER_TOKEN);
+          return new Response('', { status: 200, headers: { 'Content-Type': 'text/html' } });
+        }
+        return json({}, 404);
+      }
+    });
+    await (await connect(fetch)).importWatched([watched()], false);
+    expect(puts).toBe(1);
+
+    let failedPuts = 0;
+    const failingFetch = standardFetch({
+      providerResponse: providers([directory('movie', 1)]),
+      route: (url, init) => {
+        if (url.pathname === '/library/sections/1/all' || url.pathname === '/library/metadata/movie-1') return page([initial]);
+        if (url.pathname === '/:/scrobble' && init.method === 'PUT') {
+          failedPuts += 1;
+          return new Response('server secret body', { status: 500 });
+        }
+        return json({}, 404);
+      }
+    });
+    await expect((await connect(failingFetch, { httpReadMaxAttempts: 5 })).importWatched([watched()], false))
+      .rejects.toThrow(`Plex scrobble request to ${SERVER_ORIGIN}/:/scrobble failed with HTTP 500`);
+    expect(failedPuts).toBe(1);
+  });
+
+  it('writes played membership for an exactly identified episode without touching its show or season', async () => {
+    const show = metadata('show', 'show-1');
+    const season = metadata('season', 'season-1');
+    const episode = metadata('episode', 'episode-1', { viewCount: 0 });
+    let mutated = false;
+    const fetch = standardFetch({
+      providerResponse: providers([directory('show', 2)]),
+      route: (url, init) => {
+        if (url.pathname === '/library/sections/2/all') return page([show]);
+        if (url.pathname === '/library/metadata/show-1/children') return page([season]);
+        if (url.pathname === '/library/metadata/show-1/grandchildren') return page([episode]);
+        if (url.pathname === '/library/metadata/episode-1') {
+          return page([metadata('episode', 'episode-1', { viewCount: mutated ? 1 : 0 })]);
+        }
+        if (url.pathname === '/:/scrobble' && init.method === 'PUT') {
+          expect(url.searchParams.get('key')).toBe('episode-1');
+          mutated = true;
+          return new Response('', { status: 200 });
+        }
+        return json({}, 404);
+      }
+    });
+    await (await connect(fetch)).importWatched([watched({
+      id: `server://${SERVER_ID}/com.plexapp.plugins.library/library/metadata/episode-1`,
+      kind: 'episode', title: 'Episode 1', year: 2020, seasonNumber: 1, episodeNumber: 1,
+      externalIds: {
+        plex: 'episode-1', plexServer: SERVER_ID, plexGuid: 'plex://episode/episode-1-global', tvdb: 400
+      }
+    })], false);
+    expect(mutated).toBe(true);
+  });
+
+  it('exposes ratings plus exact completed watched membership through the official API surface', async () => {
     const connector = await connect(standardFetch());
     expect(connector.capabilities).toMatchObject({
       readMetadata: false,
@@ -414,12 +567,14 @@ describe('PlexConnector', () => {
       writeRatings: true,
       importRatings: true,
       exportRatings: true,
-      readWatched: false,
-      writeWatched: false,
+      readWatched: true,
+      writeWatched: true,
+      importWatched: true,
+      exportWatched: true,
       readWatchlist: false,
       writeWatchlist: false
     });
-    expect((connector as WatchBridgeConnector).importWatched).toBeUndefined();
+    expect((connector as WatchBridgeConnector).importWatched).toBeTypeOf('function');
     expect((connector as WatchBridgeConnector).importWatchlist).toBeUndefined();
   });
 });

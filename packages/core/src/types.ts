@@ -3,6 +3,7 @@ export type ServiceId =
   | 'rotten-tomatoes'
   | 'letterboxd'
   | 'tmdb'
+  | 'omdb'
   | 'tv-time'
   | 'trakt'
   | 'simkl'
@@ -138,6 +139,8 @@ export interface CanonicalFollow {
   displayName?: string;
   profileUrl?: string;
   direction: 'following' | 'follower';
+  /** Provider-reported relationship creation time when the export exposes it. */
+  followedAt?: string;
 }
 
 export interface RatingScale {
@@ -170,6 +173,8 @@ export interface ConnectorCapability {
   importReviews: boolean;
   exportReviews: boolean;
   readFollowing: boolean;
+  writeFollowing: boolean;
+  importFollowing: boolean;
   readFollowers: boolean;
   exportFollowing: boolean;
   exportFollowers: boolean;

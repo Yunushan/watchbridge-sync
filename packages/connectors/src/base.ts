@@ -1,5 +1,7 @@
 import type {
   CanonicalRating,
+  CanonicalFollow,
+  CanonicalReview,
   CanonicalMediaItem,
   CanonicalWatchedEntry,
   CanonicalWatchlistEntry,
@@ -64,6 +66,9 @@ export interface ConnectorBackup {
   ratings?: CanonicalRating[];
   watched?: CanonicalWatchedEntry[];
   watchlist?: CanonicalWatchlistEntry[];
+  reviews?: CanonicalReview[];
+  following?: CanonicalFollow[];
+  followers?: CanonicalFollow[];
   rawFiles?: Array<{ fileName: string; contentType: string; content: string }>;
 }
 
@@ -85,4 +90,7 @@ export interface WatchBridgeConnector {
   importRatings?(ratings: CanonicalRating[], dryRun: boolean): Promise<void>;
   importWatched?(entries: CanonicalWatchedEntry[], dryRun: boolean): Promise<void>;
   importWatchlist?(entries: CanonicalWatchlistEntry[], dryRun: boolean): Promise<void>;
+  importReviews?(entries: CanonicalReview[], dryRun: boolean): Promise<void>;
+  /** Additive same-provider follow restoration; usernames are provider-scoped. */
+  importFollowing?(entries: CanonicalFollow[], dryRun: boolean): Promise<void>;
 }

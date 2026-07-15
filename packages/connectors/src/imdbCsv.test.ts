@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseCsv, RATING_SCALES } from '@watchbridge/core';
-import { createImdbRatingsCsv, parseImdbRatingsCsv, parseImdbWatchlistCsv } from './imdbCsv.js';
+import { createImdbRatingsCsv, parseImdbCheckinsCsv, parseImdbRatingsCsv, parseImdbWatchlistCsv } from './imdbCsv.js';
 
 describe('IMDb CSV workflows', () => {
   it('parses a ratings export into canonical data', () => {
@@ -11,6 +11,20 @@ describe('IMDb CSV workflows', () => {
   it('parses a watchlist export and preserves its creation timestamp', () => {
     const list = parseImdbWatchlistCsv('Const,Created,Title,TitleType,Year\ntt0944947,2026-01-02,Game of Thrones,tvSeries,2011');
     expect(list[0]).toMatchObject({ listedAt: '2026-01-02', item: { kind: 'tv-show', externalIds: { imdb: 'tt0944947' } } });
+  });
+
+  it('parses an official Check-ins export as conservative watched membership', () => {
+    const watched = parseImdbCheckinsCsv([
+      'Const,Created,Title,TitleType,Year',
+      'tt0113277,2026-01-02,Heat,movie,1995',
+      'tt0959621,2026-01-03,Pilot,tvEpisode,2008'
+    ].join('\n'));
+
+    expect(watched).toEqual([
+      expect.objectContaining({ status: 'watched', item: expect.objectContaining({ kind: 'movie', externalIds: { imdb: 'tt0113277' } }) }),
+      expect.objectContaining({ status: 'watched', item: expect.objectContaining({ kind: 'episode', externalIds: { imdb: 'tt0959621' } }) })
+    ]);
+    expect(watched.every((entry) => entry.watchedAt === undefined)).toBe(true);
   });
 
   it('creates a portable ratings CSV that can round-trip its identifiers', () => {

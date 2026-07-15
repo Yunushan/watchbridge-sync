@@ -48,19 +48,39 @@ describe('sync planner', () => {
     }
   });
 
-  it.each(['reviews', 'following', 'followers'] as const)('blocks model-only %s execution', (feature) => {
+  it('plans a Letterboxd review export through the registered constrained Trakt writer', () => {
     const ops = planSync({
-      source: 'letterboxd',
+      source: 'letterboxd', target: 'trakt', dryRun: true,
+      selection: { reviews: true }
+    });
+
+    expect(ops.map((op) => op.type)).toEqual(['import-file', 'transform', 'write']);
+    expect(ops.at(-1)?.description).toContain('preview reviews writes to trakt');
+    expect(ops.at(-1)?.warnings).toEqual(['Dry-run only; no remote changes.']);
+  });
+
+  it.each(['following', 'followers'] as const)('archives mapped %s without inventing cross-provider identity', (feature) => {
+    const ops = planSync({
+      source: 'serializd',
       target: 'trakt',
       dryRun: true,
       selection: { [feature]: true }
     });
 
-    expect(ops).toEqual([expect.objectContaining({
-      type: 'blocked',
-      feature,
-      description: expect.stringContaining('canonical model')
-    })]);
+    expect(ops.map((operation) => operation.type)).toEqual(['import-file', 'transform', 'manual-action']);
+    expect(ops[1]).toMatchObject({ feature, description: expect.stringContaining('provider-scoped') });
+    expect(ops[2]?.warnings.join(' ')).toContain(feature === 'followers' ? 'read-only' : 'same-service');
+  });
+
+  it('blocks two-way social reconciliation because usernames are provider-scoped', () => {
+    const ops = planSync({
+      source: 'trakt', target: 'simkl', dryRun: true, direction: 'two-way',
+      selection: { following: true, followers: true }
+    });
+    expect(ops).toEqual([
+      expect.objectContaining({ type: 'blocked', feature: 'following', description: expect.stringContaining('provider-scoped') }),
+      expect.objectContaining({ type: 'blocked', feature: 'followers', warnings: [expect.stringContaining('cross-provider')] })
+    ]);
   });
 
   it('plans both directions only when both account connectors can read and write the feature', () => {

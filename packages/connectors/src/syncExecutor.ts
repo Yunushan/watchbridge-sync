@@ -1,4 +1,4 @@
-import { mediaItemsMatch, planSync, type CanonicalRating, type CanonicalWatchedEntry, type CanonicalWatchlistEntry, type ConflictPolicy, type ServiceId, type SyncOperation, type SyncRequest, type SyncSelection } from '@watchbridge/core';
+import { mediaItemsMatch, planSync, type CanonicalFollow, type CanonicalMediaItem, type CanonicalRating, type CanonicalReview, type CanonicalWatchedEntry, type CanonicalWatchlistEntry, type ConflictPolicy, type ExternalIds, type MediaKind, type ServiceId, type SyncOperation, type SyncRequest, type SyncSelection } from '@watchbridge/core';
 import type { ConnectorBackup, ConnectorContext, WatchBridgeConnector } from './base.js';
 import { createBackupArchive } from './backupSchema.js';
 
@@ -24,6 +24,51 @@ export interface SyncExecutionDirection {
   target: ServiceId;
 }
 
+export const MAX_SYNC_CONFLICT_DETAILS = 100;
+
+export type SyncConflictDecision = 'source' | 'target' | 'unchanged' | 'unresolved';
+export type SyncConflictReason =
+  | 'manual-review-required'
+  | 'source-wins-policy'
+  | 'target-wins-policy'
+  | 'newest-source'
+  | 'newest-target'
+  | 'newest-tie'
+  | 'equivalent-state'
+  | 'membership-already-present';
+
+export interface SyncConflictIdentityId {
+  provider: keyof ExternalIds;
+  value: string;
+}
+
+export interface SyncConflictIdentity {
+  /** Bounded display label only; never contains a review body or raw provider row. */
+  label: string;
+  kind: MediaKind | 'profile';
+  sourceIds: SyncConflictIdentityId[];
+  targetIds: SyncConflictIdentityId[];
+  /** Provider-scoped social identity; present only when kind is profile. */
+  service?: ServiceId;
+  username?: string;
+}
+
+export interface SyncConflictSideSummary {
+  timestamp?: string;
+  state: string;
+  value?: string;
+}
+
+export interface SyncConflictDetail {
+  feature: SyncFeature;
+  direction: SyncExecutionDirection;
+  identity: SyncConflictIdentity;
+  source: SyncConflictSideSummary;
+  target: SyncConflictSideSummary;
+  decision: SyncConflictDecision;
+  reason: SyncConflictReason;
+}
+
 export interface SyncExecutionResult {
   operations: SyncOperation[];
   sourceBackup: ConnectorBackup;
@@ -34,6 +79,10 @@ export interface SyncExecutionResult {
   /** Source-side snapshot artifact required before a confirmed two-way write. */
   sourceBackupArtifact?: { id: string };
   actions: SyncExecutionAction[];
+  /** Canonical, token-free matched-record summaries, globally bounded per execution. */
+  conflictDetails?: SyncConflictDetail[];
+  /** Exact number of additional matched-record summaries omitted by the bound. */
+  conflictDetailsTruncated?: number;
 }
 
 export class SyncExecutionError extends Error {
@@ -67,17 +116,22 @@ const features: SyncFeature[] = ['ratings', 'watched', 'watchlist', 'reviews', '
 const targetWriteCapability: Partial<Record<SyncFeature, keyof WatchBridgeConnector['capabilities']>> = {
   ratings: 'writeRatings',
   watched: 'writeWatched',
-  watchlist: 'writeWatchlist'
+  watchlist: 'writeWatchlist',
+  reviews: 'writeReviews',
+  following: 'writeFollowing'
 };
 
 function selected(selection: SyncSelection): SyncFeature[] {
   return features.filter((feature) => selection[feature]);
 }
 
-function recordsFor(backup: ConnectorBackup, feature: SyncFeature): CanonicalRating[] | CanonicalWatchedEntry[] | CanonicalWatchlistEntry[] | undefined {
+function recordsFor(backup: ConnectorBackup, feature: SyncFeature): SyncRecords | undefined {
   if (feature === 'ratings') return backup.ratings ?? [];
   if (feature === 'watched') return backup.watched ?? [];
   if (feature === 'watchlist') return backup.watchlist ?? [];
+  if (feature === 'reviews') return backup.reviews ?? [];
+  if (feature === 'following') return backup.following ?? [];
+  if (feature === 'followers') return backup.followers ?? [];
   return undefined;
 }
 
@@ -85,6 +139,8 @@ function importerFor(connector: WatchBridgeConnector, feature: SyncFeature) {
   if (feature === 'ratings') return connector.importRatings;
   if (feature === 'watched') return connector.importWatched;
   if (feature === 'watchlist') return connector.importWatchlist;
+  if (feature === 'reviews') return connector.importReviews;
+  if (feature === 'following') return connector.importFollowing;
   return undefined;
 }
 
@@ -112,7 +168,11 @@ function planBackupSync(request: SyncExecutionRequest, target: WatchBridgeConnec
       warnings: []
     });
     const capability = targetWriteCapability[feature];
-    if (capability && Boolean(target.capabilities[capability]) && importerFor(target, feature)) {
+    // Canonical social usernames are provider-scoped. Cross-service backup
+    // migration cannot infer that two equal-looking handles are one person;
+    // same-service social restoration is handled by restoreBackup instead.
+    const providerScopedSocial = feature === 'following' || feature === 'followers';
+    if (!providerScopedSocial && capability && Boolean(target.capabilities[capability]) && importerFor(target, feature)) {
       operations.push({
         type: 'write',
         feature,
@@ -135,7 +195,8 @@ function planBackupSync(request: SyncExecutionRequest, target: WatchBridgeConnec
   return operations;
 }
 
-type SyncRecords = CanonicalRating[] | CanonicalWatchedEntry[] | CanonicalWatchlistEntry[];
+type SyncRecord = CanonicalRating | CanonicalWatchedEntry | CanonicalWatchlistEntry | CanonicalReview | CanonicalFollow;
+type SyncRecords = CanonicalRating[] | CanonicalWatchedEntry[] | CanonicalWatchlistEntry[] | CanonicalReview[] | CanonicalFollow[];
 
 interface PreparedWrite {
   feature: SyncFeature;
@@ -151,56 +212,197 @@ interface PlannedAction {
   skipped?: SyncExecutionAction;
 }
 
-function timestamp(record: CanonicalRating | CanonicalWatchedEntry | CanonicalWatchlistEntry): number | undefined {
+function timestamp(record: SyncRecord): number | undefined {
   let raw: string | undefined;
   if ('ratedAt' in record) raw = record.ratedAt;
   else if ('watchedAt' in record) raw = record.watchedAt;
   else if ('listedAt' in record) raw = record.listedAt;
+  else if ('reviewedAt' in record) raw = record.reviewedAt;
+  else if ('followedAt' in record) raw = record.followedAt;
   if (!raw) return undefined;
   const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function resolveConflicts(feature: SyncFeature, incoming: SyncRecords, existing: SyncRecords, policy: ConflictPolicy): { records: SyncRecords; conflicts: number } {
+function isSocialRecord(record: SyncRecord): record is CanonicalFollow {
+  return 'direction' in record && 'username' in record;
+}
+
+function recordsMatch(feature: SyncFeature, left: SyncRecord, right: SyncRecord): boolean {
+  if (feature === 'following' || feature === 'followers') {
+    return isSocialRecord(left) && isSocialRecord(right)
+      && left.service === right.service
+      && left.direction === right.direction
+      && left.username.toLocaleLowerCase('en-US') === right.username.toLocaleLowerCase('en-US');
+  }
+  return !isSocialRecord(left) && !isSocialRecord(right) && mediaItemsMatch(left.item, right.item);
+}
+
+const externalIdKeys: Array<keyof ExternalIds> = [
+  'imdb', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
+  'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby',
+  'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk',
+  'movielens', 'letterboxdSlug'
+];
+
+interface ConflictDetailCollector {
+  details: SyncConflictDetail[];
+  truncated: number;
+}
+
+interface ConflictOutcome {
+  includeSource: boolean;
+  decision: SyncConflictDecision;
+  reason: SyncConflictReason;
+}
+
+function addConflictDetail(collector: ConflictDetailCollector, detail: SyncConflictDetail): void {
+  if (collector.details.length < MAX_SYNC_CONFLICT_DETAILS) collector.details.push(detail);
+  else collector.truncated += 1;
+}
+
+function boundedLabel(value: string, maximum: number): string {
+  const normalized = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maximum) return normalized;
+  return `${normalized.slice(0, Math.max(0, maximum - 1)).trimEnd()}…`;
+}
+
+function identityIds(item: CanonicalMediaItem): SyncConflictIdentityId[] {
+  const ids: SyncConflictIdentityId[] = [];
+  for (const provider of externalIdKeys) {
+    const value = item.externalIds[provider];
+    if (value !== undefined) ids.push({ provider, value: String(value) });
+  }
+  return ids;
+}
+
+function conflictIdentity(sourceRecord: SyncRecord, targetRecord: SyncRecord): SyncConflictIdentity {
+  if (isSocialRecord(sourceRecord) && isSocialRecord(targetRecord)) {
+    return {
+      label: boundedLabel(`@${sourceRecord.username}`, 300),
+      kind: 'profile',
+      sourceIds: [],
+      targetIds: [],
+      service: sourceRecord.service,
+      username: sourceRecord.username
+    };
+  }
+  if (isSocialRecord(sourceRecord) || isSocialRecord(targetRecord)) {
+    throw new Error('Matched conflict records have incompatible canonical identities.');
+  }
+  const coordinates = [
+    sourceRecord.item.year === undefined ? undefined : String(sourceRecord.item.year),
+    sourceRecord.item.seasonNumber === undefined ? undefined : `S${sourceRecord.item.seasonNumber}`,
+    sourceRecord.item.episodeNumber === undefined ? undefined : `E${sourceRecord.item.episodeNumber}`
+  ].filter((value): value is string => Boolean(value));
+  const suffix = coordinates.length > 0 ? ` (${coordinates.join(' · ')})` : '';
+  return {
+    label: boundedLabel(`${sourceRecord.item.title}${suffix}`, 300),
+    kind: sourceRecord.item.kind,
+    sourceIds: identityIds(sourceRecord.item),
+    targetIds: identityIds(targetRecord.item)
+  };
+}
+
+function conflictSideSummary(feature: SyncFeature, record: SyncRecord): SyncConflictSideSummary {
+  const rawTimestamp = timestamp(record);
+  const timestampValue = rawTimestamp === undefined ? undefined : new Date(rawTimestamp).toISOString();
+  if (feature === 'ratings' && 'value' in record) {
+    return {
+      ...(timestampValue ? { timestamp: timestampValue } : {}),
+      state: 'rated',
+      value: `${record.value} on ${record.scale.min}–${record.scale.max}`
+    };
+  }
+  if (feature === 'watched' && 'status' in record) {
+    const values = [
+      record.progress === undefined ? undefined : `progress ${record.progress}`,
+      record.plays === undefined ? undefined : `plays ${record.plays}`
+    ].filter((value): value is string => Boolean(value));
+    return {
+      ...(timestampValue ? { timestamp: timestampValue } : {}),
+      state: record.listStatus ? `${record.status}; ${record.listStatus}` : record.status,
+      ...(values.length > 0 ? { value: values.join(', ') } : {})
+    };
+  }
+  if (feature === 'watchlist' && !isSocialRecord(record)) {
+    return { ...(timestampValue ? { timestamp: timestampValue } : {}), state: 'planned membership' };
+  }
+  if (feature === 'reviews' && 'body' in record) {
+    return {
+      ...(timestampValue ? { timestamp: timestampValue } : {}),
+      state: `review (${record.body.length} characters${record.spoiler ? ', spoiler-marked' : ''})`,
+      ...(record.rating ? { value: `rating ${record.rating.value} on ${record.rating.scale.min}–${record.rating.scale.max}` } : {})
+    };
+  }
+  if (isSocialRecord(record)) {
+    return { ...(timestampValue ? { timestamp: timestampValue } : {}), state: `${record.direction} membership` };
+  }
+  throw new Error(`Cannot summarize an incompatible ${feature} conflict record.`);
+}
+
+function conflictDetail(
+  feature: SyncFeature,
+  direction: SyncExecutionDirection,
+  sourceRecord: SyncRecord,
+  targetRecord: SyncRecord,
+  outcome: ConflictOutcome
+): SyncConflictDetail {
+  return {
+    feature,
+    direction,
+    identity: conflictIdentity(sourceRecord, targetRecord),
+    source: conflictSideSummary(feature, sourceRecord),
+    target: conflictSideSummary(feature, targetRecord),
+    decision: outcome.decision,
+    reason: outcome.reason
+  };
+}
+
+function oneWayConflictOutcome(
+  feature: SyncFeature,
+  sourceRecord: SyncRecord,
+  targetRecord: SyncRecord,
+  policy: ConflictPolicy
+): ConflictOutcome {
+  if (feature === 'watchlist' || feature === 'following' || feature === 'followers') {
+    return { includeSource: false, decision: 'unchanged', reason: 'membership-already-present' };
+  }
+  if (policy === 'target-wins') return { includeSource: false, decision: 'target', reason: 'target-wins-policy' };
+  if (policy === 'manual') {
+    return recordsEquivalent(feature, sourceRecord, targetRecord)
+      ? { includeSource: false, decision: 'unchanged', reason: 'equivalent-state' }
+      : { includeSource: false, decision: 'unresolved', reason: 'manual-review-required' };
+  }
+  if (policy === 'source-wins') return { includeSource: true, decision: 'source', reason: 'source-wins-policy' };
+  const comparison = compareForNewest(feature, sourceRecord, targetRecord);
+  if (comparison > 0) return { includeSource: true, decision: 'source', reason: 'newest-source' };
+  if (comparison < 0) return { includeSource: false, decision: 'target', reason: 'newest-target' };
+  return { includeSource: false, decision: 'unchanged', reason: 'newest-tie' };
+}
+
+function resolveConflicts(
+  feature: SyncFeature,
+  incoming: SyncRecords,
+  existing: SyncRecords,
+  policy: ConflictPolicy,
+  direction: SyncExecutionDirection,
+  collector: ConflictDetailCollector
+): { records: SyncRecords; conflicts: number } {
   const records: SyncRecords = [];
   let conflicts = 0;
   for (const record of incoming) {
     const targetRecord = existing
-      .filter((candidate) => mediaItemsMatch(record.item, candidate.item))
+      .filter((candidate) => recordsMatch(feature, record, candidate))
       .sort((left, right) => (timestamp(right) ?? Number.NEGATIVE_INFINITY) - (timestamp(left) ?? Number.NEGATIVE_INFINITY))[0];
     if (!targetRecord) {
       records.push(record as never);
       continue;
     }
     conflicts += 1;
-    // A duplicate watchlist entry is never useful. Ratings and watched/progress
-    // records honor the selected conflict policy.
-    if (feature === 'watchlist' || policy === 'target-wins' || policy === 'manual') continue;
-    if (policy === 'source-wins') {
-      records.push(record as never);
-      continue;
-    }
-    const incomingTime = timestamp(record);
-    const existingTime = timestamp(targetRecord);
-    if (incomingTime !== undefined && (existingTime === undefined || incomingTime > existingTime)) {
-      records.push(record as never);
-      continue;
-    }
-    if (incomingTime !== undefined && existingTime !== undefined && incomingTime < existingTime) continue;
-    if (incomingTime === undefined && existingTime !== undefined) continue;
-    if (feature === 'watched' && 'status' in record && 'status' in targetRecord) {
-      if (record.listStatus !== targetRecord.listStatus && (record.listStatus !== undefined || targetRecord.listStatus !== undefined)) continue;
-      const incomingProgress = record.progress ?? Number.NEGATIVE_INFINITY;
-      const existingProgress = targetRecord.progress ?? Number.NEGATIVE_INFINITY;
-      const incomingPlays = record.plays ?? Number.NEGATIVE_INFINITY;
-      const existingPlays = targetRecord.plays ?? Number.NEGATIVE_INFINITY;
-      const statusRank = { 'in-progress': 1, watched: 2, rewatched: 3 } as const;
-      if (
-        incomingProgress > existingProgress
-        || (incomingProgress === existingProgress && incomingPlays > existingPlays)
-        || (incomingProgress === existingProgress && incomingPlays === existingPlays && statusRank[record.status] > statusRank[targetRecord.status])
-      ) records.push(record as never);
-    }
+    const outcome = oneWayConflictOutcome(feature, record, targetRecord, policy);
+    addConflictDetail(collector, conflictDetail(feature, direction, record, targetRecord, outcome));
+    if (outcome.includeSource) records.push(record as never);
   }
   return { records, conflicts };
 }
@@ -254,8 +456,8 @@ function normalizedRating(record: CanonicalRating): number {
 
 function recordsEquivalent(
   feature: SyncFeature,
-  left: CanonicalRating | CanonicalWatchedEntry | CanonicalWatchlistEntry,
-  right: CanonicalRating | CanonicalWatchedEntry | CanonicalWatchlistEntry
+  left: SyncRecord,
+  right: SyncRecord
 ): boolean {
   if (feature === 'ratings' && 'value' in left && 'value' in right) {
     return Math.abs(normalizedRating(left) - normalizedRating(right)) <= 1e-9;
@@ -267,6 +469,21 @@ function recordsEquivalent(
       && left.plays === right.plays
       && timestamp(left) === timestamp(right);
   }
+  if (feature === 'reviews' && 'body' in left && 'body' in right) {
+    const ratingsEqual = left.rating === undefined && right.rating === undefined
+      || left.rating !== undefined && right.rating !== undefined
+        && Math.abs(normalizedRating(left.rating) - normalizedRating(right.rating)) <= 1e-9
+        && timestamp(left.rating) === timestamp(right.rating);
+    return left.body === right.body
+      && left.spoiler === right.spoiler
+      && timestamp(left) === timestamp(right)
+      && ratingsEqual;
+  }
+  if ((feature === 'following' || feature === 'followers') && isSocialRecord(left) && isSocialRecord(right)) {
+    // Social relationships are set membership. Display/profile metadata and
+    // provider timestamps do not justify echoing an already-present follow.
+    return recordsMatch(feature, left, right);
+  }
   // Matching watchlist entries represent the same set membership and should
   // never be echoed back merely because provider timestamps differ.
   return feature === 'watchlist';
@@ -274,8 +491,8 @@ function recordsEquivalent(
 
 function compareForNewest(
   feature: SyncFeature,
-  left: CanonicalRating | CanonicalWatchedEntry | CanonicalWatchlistEntry,
-  right: CanonicalRating | CanonicalWatchedEntry | CanonicalWatchlistEntry
+  left: SyncRecord,
+  right: SyncRecord
 ): number {
   const leftTime = timestamp(left);
   const rightTime = timestamp(right);
@@ -301,9 +518,9 @@ function compareForNewest(
 }
 
 function deduplicateRecords(feature: SyncFeature, input: SyncRecords): SyncRecords {
-  const output: Array<CanonicalRating | CanonicalWatchedEntry | CanonicalWatchlistEntry> = [];
+  const output: SyncRecord[] = [];
   for (const record of input) {
-    const existingIndex = output.findIndex((candidate) => mediaItemsMatch(record.item, candidate.item));
+    const existingIndex = output.findIndex((candidate) => recordsMatch(feature, record, candidate));
     if (existingIndex < 0) {
       output.push(record);
       continue;
@@ -317,18 +534,20 @@ function resolveTwoWayConflicts(
   feature: SyncFeature,
   sourceInput: SyncRecords,
   targetInput: SyncRecords,
-  policy: ConflictPolicy
+  policy: ConflictPolicy,
+  direction: SyncExecutionDirection,
+  collector: ConflictDetailCollector
 ): { sourceToTarget: SyncRecords; targetToSource: SyncRecords; conflicts: number } {
   const sourceRecords = deduplicateRecords(feature, sourceInput);
   const targetRecords = deduplicateRecords(feature, targetInput);
-  const sourceToTarget: Array<CanonicalRating | CanonicalWatchedEntry | CanonicalWatchlistEntry> = [];
-  const targetToSource: Array<CanonicalRating | CanonicalWatchedEntry | CanonicalWatchlistEntry> = [];
+  const sourceToTarget: SyncRecord[] = [];
+  const targetToSource: SyncRecord[] = [];
   const matchedTargetIndexes = new Set<number>();
   let conflicts = 0;
 
   for (const sourceRecord of sourceRecords) {
     const targetIndex = targetRecords.findIndex((candidate, index) =>
-      !matchedTargetIndexes.has(index) && mediaItemsMatch(sourceRecord.item, candidate.item));
+      !matchedTargetIndexes.has(index) && recordsMatch(feature, sourceRecord, candidate));
     if (targetIndex < 0) {
       sourceToTarget.push(sourceRecord);
       continue;
@@ -336,18 +555,54 @@ function resolveTwoWayConflicts(
     matchedTargetIndexes.add(targetIndex);
     const targetRecord = targetRecords[targetIndex]!;
     conflicts += 1;
-    if (recordsEquivalent(feature, sourceRecord, targetRecord) || feature === 'watchlist' || policy === 'manual') continue;
+    if (recordsEquivalent(feature, sourceRecord, targetRecord)) {
+      addConflictDetail(collector, conflictDetail(feature, direction, sourceRecord, targetRecord, {
+        includeSource: false, decision: 'unchanged', reason: 'equivalent-state'
+      }));
+      continue;
+    }
+    if (feature === 'watchlist') {
+      addConflictDetail(collector, conflictDetail(feature, direction, sourceRecord, targetRecord, {
+        includeSource: false, decision: 'unchanged', reason: 'membership-already-present'
+      }));
+      continue;
+    }
+    if (policy === 'manual') {
+      addConflictDetail(collector, conflictDetail(feature, direction, sourceRecord, targetRecord, {
+        includeSource: false, decision: 'unresolved', reason: 'manual-review-required'
+      }));
+      continue;
+    }
     if (policy === 'source-wins') {
+      addConflictDetail(collector, conflictDetail(feature, direction, sourceRecord, targetRecord, {
+        includeSource: true, decision: 'source', reason: 'source-wins-policy'
+      }));
       sourceToTarget.push(sourceRecord);
       continue;
     }
     if (policy === 'target-wins') {
+      addConflictDetail(collector, conflictDetail(feature, direction, sourceRecord, targetRecord, {
+        includeSource: false, decision: 'target', reason: 'target-wins-policy'
+      }));
       targetToSource.push(targetRecord);
       continue;
     }
     const newest = compareForNewest(feature, sourceRecord, targetRecord);
-    if (newest > 0) sourceToTarget.push(sourceRecord);
-    else if (newest < 0) targetToSource.push(targetRecord);
+    if (newest > 0) {
+      addConflictDetail(collector, conflictDetail(feature, direction, sourceRecord, targetRecord, {
+        includeSource: true, decision: 'source', reason: 'newest-source'
+      }));
+      sourceToTarget.push(sourceRecord);
+    } else if (newest < 0) {
+      addConflictDetail(collector, conflictDetail(feature, direction, sourceRecord, targetRecord, {
+        includeSource: false, decision: 'target', reason: 'newest-target'
+      }));
+      targetToSource.push(targetRecord);
+    } else {
+      addConflictDetail(collector, conflictDetail(feature, direction, sourceRecord, targetRecord, {
+        includeSource: false, decision: 'unchanged', reason: 'newest-tie'
+      }));
+    }
   }
 
   for (const [index, targetRecord] of targetRecords.entries()) {
@@ -367,6 +622,13 @@ function actionForPrepared(prepared: PreparedWrite, status: 'previewed' | 'execu
     count: prepared.records.length,
     conflicts: prepared.conflicts,
     ...(prepared.includeDirection ? { direction: prepared.direction } : {})
+  };
+}
+
+function conflictReviewFields(collector: ConflictDetailCollector): Pick<SyncExecutionResult, 'conflictDetails' | 'conflictDetailsTruncated'> {
+  return {
+    ...(collector.details.length > 0 ? { conflictDetails: collector.details } : {}),
+    ...(collector.truncated > 0 ? { conflictDetailsTruncated: collector.truncated } : {})
   };
 }
 
@@ -412,6 +674,7 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
   }
   const conflictPolicy = request.conflictPolicy ?? 'manual';
   const actionPlans: PlannedAction[] = [];
+  const conflictCollector: ConflictDetailCollector = { details: [], truncated: 0 };
 
   if (twoWay) {
     for (const feature of selected(request.selection)) {
@@ -426,7 +689,14 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
         || !hasDirectionalWriteOperation(operations, feature, targetToSource)) {
         throw new Error(`Two-way ${feature} lacks a verified importer or directional write operation.`);
       }
-      const resolved = resolveTwoWayConflicts(feature, sourceRecords, targetRecords, conflictPolicy);
+      const resolved = resolveTwoWayConflicts(
+        feature,
+        sourceRecords,
+        targetRecords,
+        conflictPolicy,
+        sourceToTarget,
+        conflictCollector
+      );
       for (const [direction, records, importer, incomingRecords] of [
         [sourceToTarget, resolved.sourceToTarget, targetImporter, sourceRecords],
         [targetToSource, resolved.targetToSource, sourceImporter, targetRecords]
@@ -470,7 +740,14 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
         continue;
       }
       const existing = recordsFor(targetBackup, feature) ?? [];
-      const resolved = resolveConflicts(feature, records, existing, conflictPolicy);
+      const resolved = resolveConflicts(
+        feature,
+        records,
+        existing,
+        conflictPolicy,
+        { source: request.source, target: request.target },
+        conflictCollector
+      );
       const completeRecords = includeWatchedDependencyClosure(feature, request.target, resolved.records, records);
       if (completeRecords.length === 0) {
         actionPlans.push({ skipped: {
@@ -506,7 +783,10 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
       const detail = error instanceof Error ? error.message : 'Unknown validation error.';
       throw new SyncExecutionError(
         `Sync preflight failed while processing ${prepared.feature}: ${detail}`,
-        { operations, sourceBackup, targetBackup, sourceBackupArtifact, targetBackupArtifact, actions: [] },
+        {
+          operations, sourceBackup, targetBackup, sourceBackupArtifact, targetBackupArtifact, actions: [],
+          ...conflictReviewFields(conflictCollector)
+        },
         prepared.feature,
         false,
         prepared.direction
@@ -516,7 +796,10 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
 
   if (request.dryRun) {
     const actions = actionPlans.map((plan) => plan.skipped ?? actionForPrepared(plan.prepared!, 'previewed'));
-    return { operations, sourceBackup, targetBackup, sourceBackupArtifact, targetBackupArtifact, actions };
+    return {
+      operations, sourceBackup, targetBackup, sourceBackupArtifact, targetBackupArtifact, actions,
+      ...conflictReviewFields(conflictCollector)
+    };
   }
 
   const actions: SyncExecutionAction[] = [];
@@ -533,7 +816,10 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
       const detail = error instanceof Error ? error.message : 'Unknown provider error.';
       throw new SyncExecutionError(
         `Sync failed while processing ${prepared.feature} from ${prepared.direction.source} to ${prepared.direction.target}: ${detail}`,
-        { operations, sourceBackup, targetBackup, sourceBackupArtifact, targetBackupArtifact, actions },
+        {
+          operations, sourceBackup, targetBackup, sourceBackupArtifact, targetBackupArtifact, actions,
+          ...conflictReviewFields(conflictCollector)
+        },
         prepared.feature,
         true,
         prepared.direction
@@ -542,7 +828,10 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
     actions.push(actionForPrepared(prepared, 'executed'));
   }
 
-  return { operations, sourceBackup, targetBackup, sourceBackupArtifact, targetBackupArtifact, actions };
+  return {
+    operations, sourceBackup, targetBackup, sourceBackupArtifact, targetBackupArtifact, actions,
+    ...conflictReviewFields(conflictCollector)
+  };
 }
 
 export function hasOfficialSyncConnector(service: ServiceId): boolean {

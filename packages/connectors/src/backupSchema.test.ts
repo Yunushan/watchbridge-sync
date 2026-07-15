@@ -96,6 +96,76 @@ describe('WatchBridge backup schema', () => {
     })).toThrow('progress must be a non-negative integer');
   });
 
+  it('strictly round-trips reviews with an optional attached rating', () => {
+    const item = validBackup().ratings[0].item;
+    const attachedRating = { ...validBackup().ratings[0], reviewText: 'A precise crime epic.' };
+    const archive = {
+      ...validBackup(),
+      reviews: [{
+        item,
+        service: 'letterboxd',
+        body: 'A precise crime epic.',
+        spoiler: false,
+        reviewedAt: '2026-01-02T00:00:00Z',
+        rating: attachedRating
+      }]
+    };
+
+    expect(parseBackupArchive(archive).reviews).toEqual(archive.reviews);
+    expect(() => parseBackupArchive({
+      ...archive,
+      reviews: [{ ...archive.reviews[0], body: '' }]
+    })).toThrow('non-empty string');
+    expect(() => parseBackupArchive({
+      ...archive,
+      reviews: [{ ...archive.reviews[0], spoiler: 'yes' }]
+    })).toThrow('spoiler must be a boolean');
+    expect(() => parseBackupArchive({
+      ...archive,
+      reviews: [{ ...archive.reviews[0], service: 'imdb' }]
+    })).toThrow('rating.sourceService');
+    expect(() => parseBackupArchive({
+      ...archive,
+      reviews: [{
+        ...archive.reviews[0],
+        rating: { ...attachedRating, item: { ...item, title: 'Thief', year: 1981, externalIds: { imdb: 'tt0083190' } } }
+      }]
+    })).toThrow('same media item');
+    expect(() => parseBackupArchive({
+      ...archive,
+      reviews: [{ ...archive.reviews[0], rating: { ...attachedRating, reviewText: 'Different text' } }]
+    })).toThrow('must match');
+  });
+
+  it('strictly round-trips provider-scoped following and follower relationships', () => {
+    const archive = {
+      ...validBackup(),
+      following: [{
+        service: 'letterboxd', username: 'cinephile', displayName: 'Cine Phile',
+        profileUrl: 'https://letterboxd.com/cinephile/', direction: 'following',
+        followedAt: '2026-01-02T00:00:00Z'
+      }],
+      followers: [{ service: 'letterboxd', username: 'friend', direction: 'follower' }]
+    };
+
+    expect(parseBackupArchive(archive)).toEqual(archive);
+    expect(() => parseBackupArchive({
+      ...archive, following: [{ ...archive.following[0], direction: 'follower' }]
+    })).toThrow('direction following');
+    expect(() => parseBackupArchive({
+      ...archive, followers: [{ ...archive.followers[0], service: 'imdb' }]
+    })).toThrow('backup.service');
+    expect(() => parseBackupArchive({
+      ...archive, following: [{ ...archive.following[0], profileUrl: 'javascript:alert(1)' }]
+    })).toThrow('HTTPS URL');
+    expect(() => parseBackupArchive({
+      ...archive, following: [archive.following[0], { ...archive.following[0], username: 'CINEPHILE' }]
+    })).toThrow('duplicate provider-scoped username');
+    expect(() => parseBackupArchive({
+      ...archive, followers: [{ ...archive.followers[0], followedAt: 'not-a-date' }]
+    })).toThrow('valid date');
+  });
+
   it('round-trips lossless list states without weakening coarse status validation', () => {
     const base = validBackup();
     const item = { id: 'shikimori:1', kind: 'anime', title: 'Cowboy Bebop', externalIds: {} };

@@ -10,10 +10,12 @@ import {
 
 describe('ProviderFileImportPanel manifests', () => {
   it('enforces the provider-specific file requirements', () => {
-    expect(() => validateProviderFileSelection('imdb', {})).toThrow('ratings or watchlist');
+    expect(() => validateProviderFileSelection('imdb', {})).toThrow('ratings, Check-ins, or watchlist');
     expect(() => validateProviderFileSelection('imdb', { ratings: 'csv' })).not.toThrow();
-    expect(() => validateProviderFileSelection('letterboxd', {})).toThrow('ratings, watched, or watchlist');
+    expect(() => validateProviderFileSelection('imdb', { watched: 'csv' })).not.toThrow();
+    expect(() => validateProviderFileSelection('letterboxd', {})).toThrow('ratings, watched, watchlist, or reviews');
     expect(() => validateProviderFileSelection('letterboxd', { watched: 'csv' })).not.toThrow();
+    expect(() => validateProviderFileSelection('letterboxd', { reviews: 'csv' })).not.toThrow();
     expect(() => validateProviderFileSelection('movielens', { ratings: 'csv' })).toThrow('ratings.csv and movies.csv');
     expect(() => validateProviderFileSelection('movielens', { ratings: 'ratings', movies: 'movies' })).not.toThrow();
   });
@@ -28,16 +30,19 @@ describe('ProviderFileImportPanel manifests', () => {
     expect(() => buildProviderImportRequest('imdb', { ratings: expandsWhenJsonEscaped })).toThrow('serialized provider-file request');
   });
 
-  it('renders dedicated provider inputs without offering Letterboxd reviews', () => {
+  it('renders dedicated provider inputs and documents Letterboxd review portability', () => {
     const html = renderToStaticMarkup(<ProviderFileImportPanel />);
     expect(html).toContain('Provider export files to canonical backup');
     expect(html).toContain('IMDb ratings CSV');
+    expect(html).toContain('IMDb Check-ins CSV');
     expect(html).toContain('IMDb watchlist CSV');
     expect(html).toContain('MovieLens');
     expect(html).toContain('Letterboxd');
     expect(html).toContain('10 MiB');
     expect(html).toContain('without browser credentials');
-    expect(html).not.toContain('reviews.csv');
+    expect(html).toContain('including IMDb Check-ins and Letterboxd reviews');
+    expect(buildProviderImportRequest('letterboxd', { reviews: 'Name,Review\nHeat,Great film' }).body)
+      .toEqual({ service: 'letterboxd', files: { reviews: 'Name,Review\nHeat,Great film' } });
   });
 });
 

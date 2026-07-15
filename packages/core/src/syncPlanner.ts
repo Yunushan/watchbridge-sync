@@ -87,12 +87,21 @@ export function planSync(request: SyncRequest): SyncOperation[] {
     const sourceSupport = getRuntimeSupport(request.source);
     const targetSupport = getRuntimeSupport(request.target);
     for (const feature of features) {
+      if (feature === 'following' || feature === 'followers') {
+        operations.push(blockedOperation(
+          request,
+          feature,
+          `Two-way ${feature} cannot reconcile provider-scoped usernames across services.`,
+          'Social relationships can be archived and restored to the same provider, but WatchBridge does not infer cross-provider account identity.'
+        ));
+        continue;
+      }
       if (!isExecutableSyncFeature(feature)) {
         operations.push(blockedOperation(
           request,
           feature,
           `${feature} exists in the canonical model but has no executable sync pipeline.`,
-          'Reviews, following, and followers remain model-only until the backup schema and connector runtime can round-trip them.'
+          'This feature is not registered in the current executable runtime contract.'
         ));
         continue;
       }
@@ -148,7 +157,7 @@ export function planSync(request: SyncRequest): SyncOperation[] {
         request,
         feature,
         `${feature} exists in the canonical model but has no executable sync pipeline.`,
-        'Reviews, following, and followers remain model-only until the backup schema and connector runtime can round-trip them.'
+        'This feature is not registered in the current executable runtime contract.'
       ));
       continue;
     }
@@ -170,11 +179,27 @@ export function planSync(request: SyncRequest): SyncOperation[] {
       feature,
       source: request.source,
       target: request.target,
-      description: `Normalize ${feature}, match external IDs, deduplicate, and apply service-specific transforms.`,
+      description: feature === 'following' || feature === 'followers'
+        ? `Validate and deduplicate provider-scoped ${feature} usernames without inferring cross-provider identity.`
+        : `Normalize ${feature}, match external IDs, deduplicate, and apply service-specific transforms.`,
       warnings: request.source === 'letterboxd' && request.target === 'imdb' && feature === 'ratings'
         ? ['Letterboxd ratings are doubled for IMDb 1-10 output.']
         : []
     });
+
+    if (feature === 'following' || feature === 'followers') {
+      operations.push({
+        type: 'manual-action',
+        feature,
+        source: request.source,
+        target: request.target,
+        description: `${feature} remains in the canonical backup; no cross-service account identity mapping is inferred.`,
+        warnings: [feature === 'followers'
+          ? 'A target account cannot make third parties follow it; follower lists are intentionally read-only.'
+          : 'Use same-service backup restore only when that provider has an explicitly registered additive follow importer.']
+      });
+      continue;
+    }
 
     const target = getRuntimeSupport(request.target);
     if (supports(target.accountWriteFeatures, feature)) {

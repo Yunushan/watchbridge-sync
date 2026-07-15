@@ -8,6 +8,7 @@ import {
   RATING_SCALES,
   type CanonicalMediaItem,
   type CanonicalRating,
+  type CanonicalWatchedEntry,
   type ExternalIds,
   type RatingScale,
   type ServiceId
@@ -58,6 +59,7 @@ interface PlexLibrary {
 interface PlexProviderState {
   metadataUrl: URL;
   rateUrl: URL;
+  scrobbleUrl: URL;
   libraries: PlexLibrary[];
 }
 
@@ -81,6 +83,7 @@ interface PlexItem {
   seasonNumber?: number;
   episodeNumber?: number;
   rating?: number;
+  viewCount: number;
   externalIds: ExternalIds;
 }
 
@@ -97,6 +100,7 @@ interface RatingWrite {
 }
 
 class PlexRateError extends Error {}
+class PlexScrobbleError extends Error {}
 
 function object(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object.`);
@@ -291,10 +295,15 @@ function parseProvider(value: unknown, expectedServerId: string, baseUrl: URL): 
   const metadataFeature = uniqueFeature(features, 'metadata');
   const contentFeature = uniqueFeature(features, 'content');
   const rateFeature = uniqueFeature(features, 'rate');
+  const timelineFeature = uniqueFeature(features, 'timeline');
   const metadataUrl = resolveKey(baseUrl, metadataFeature.key, 'Plex metadata feature key');
   const contentUrl = resolveKey(baseUrl, contentFeature.key, 'Plex content feature key');
   const rateUrl = resolveKey(baseUrl, rateFeature.key, 'Plex rate feature key');
-  if (metadataUrl.search || rateUrl.search) throw new Error('Plex metadata and rate feature keys cannot contain query parameters.');
+  const timelineUrl = resolveKey(baseUrl, timelineFeature.key, 'Plex timeline feature key');
+  const scrobbleUrl = resolveKey(baseUrl, timelineFeature.scrobbleKey, 'Plex timeline scrobbleKey');
+  if (metadataUrl.search || rateUrl.search || timelineUrl.search || scrobbleUrl.search) {
+    throw new Error('Plex metadata, rate, timeline, and scrobble feature keys cannot contain query parameters.');
+  }
 
   const directories = array(contentFeature.Directory, 'Plex content feature.Directory', MAX_LIBRARIES);
   const libraries: PlexLibrary[] = [];
@@ -312,7 +321,7 @@ function parseProvider(value: unknown, expectedServerId: string, baseUrl: URL): 
     seen.add(listUrl.href);
     libraries.push({ type: directory.type, url: listUrl });
   }
-  return { metadataUrl, rateUrl, libraries };
+  return { metadataUrl, rateUrl, scrobbleUrl, libraries };
 }
 
 function parseGuid(value: unknown, type: PlexMediaType, label: string): string {
@@ -383,6 +392,10 @@ function parseMetadataItem(
   const hasRating = own(raw, 'userRating') || (!own(raw, 'userRating') && own(container, 'userRating'));
   const ratingValue = itemField(raw, container, 'userRating');
   const rating = hasRating ? safeRating(ratingValue, `${label}.userRating`) : undefined;
+  const hasViewCount = own(raw, 'viewCount') || (!own(raw, 'viewCount') && own(container, 'viewCount'));
+  const viewCount = hasViewCount
+    ? integer(itemField(raw, container, 'viewCount'), `${label}.viewCount`, 0, Number.MAX_SAFE_INTEGER)
+    : 0;
   const external = parseExternalGuids(itemField(raw, container, 'Guid'), expectedType, `${label}.Guid`);
   return {
     ratingKey,
@@ -395,6 +408,7 @@ function parseMetadataItem(
     ...(seasonNumber !== undefined ? { seasonNumber } : {}),
     ...(episodeNumber !== undefined ? { episodeNumber } : {}),
     ...(rating !== undefined ? { rating } : {}),
+    viewCount,
     externalIds: {
       ...external.externalIds,
       plex: ratingKey,
@@ -625,7 +639,12 @@ export class PlexConnector implements WatchBridgeConnector {
       value: item.rating,
       scale: RATING_SCALES.plex10
     }]);
-    return { service: 'plex', exportedAt: new Date().toISOString(), ratings };
+    const watched: CanonicalWatchedEntry[] = items.flatMap((item) => (
+      (item.type === 'movie' || item.type === 'episode') && item.viewCount > 0
+        ? [{ item: toCanonical(item, state.serverId), service: 'plex' as const, status: 'watched' as const }]
+        : []
+    ));
+    return { service: 'plex', exportedAt: new Date().toISOString(), ratings, watched };
   }
 
   async importRatings(ratings: CanonicalRating[], dryRun: boolean): Promise<void> {
@@ -666,6 +685,52 @@ export class PlexConnector implements WatchBridgeConnector {
       const updated = await this.getItem(write.item.ratingKey, write.item.type);
       if (!sameIdentity(write.item, updated)) throw new Error(`Plex item ${write.item.ratingKey} changed identity after rating update.`);
       if (updated.rating !== write.value) throw new Error(`Plex did not return the requested rating for item ${write.item.ratingKey}.`);
+    }
+  }
+
+  async importWatched(entries: CanonicalWatchedEntry[], dryRun: boolean): Promise<void> {
+    const state = this.connected();
+    if (!Array.isArray(entries) || entries.length > MAX_RECORDS) throw new Error(`Plex watched import accepts at most ${MAX_RECORDS} records.`);
+    const desired = entries.map((entry, index) => {
+      const label = `Plex watched[${index}]`;
+      if (!entry || typeof entry !== 'object') throw new Error(`${label} must be an object.`);
+      if (entry.item.kind !== 'movie' && entry.item.kind !== 'episode') {
+        throw new Error(`${label}.item must be a movie or exact episode; aggregate Plex watched state is unsupported.`);
+      }
+      if (entry.status !== 'watched') throw new Error(`${label}.status must be watched; replay and progress state are unsupported.`);
+      if (entry.listStatus !== undefined) throw new Error(`${label}.listStatus is unsupported by Plex played membership.`);
+      if (entry.progress !== undefined) throw new Error(`${label}.progress is unsupported by Plex played membership.`);
+      if (entry.plays !== undefined) throw new Error(`${label}.plays is unsupported because Plex scrobble sets played state without creating view history.`);
+      if (entry.watchedAt !== undefined) throw new Error(`${label}.watchedAt is unsupported because Plex scrobble cannot preserve a caller timestamp.`);
+      return { entry, label };
+    });
+
+    const items = await this.libraryItems();
+    const targets = new Map<string, PlexItem>();
+    for (const desiredEntry of desired) {
+      const item = resolveItem(items, desiredEntry.entry.item, state.serverId, `${desiredEntry.label}.item`);
+      targets.set(item.ratingKey, item);
+    }
+    if (dryRun) return;
+
+    // Re-read every target before the first mutation so a later drift cannot leave a partial batch.
+    const pending: PlexItem[] = [];
+    for (const item of targets.values()) {
+      const current = await this.getItem(item.ratingKey, item.type);
+      if (!sameIdentity(item, current) || item.viewCount !== current.viewCount) {
+        throw new Error(`Plex item ${item.ratingKey} changed after preflight; aborting before mutation.`);
+      }
+      if (current.viewCount === 0) pending.push(item);
+    }
+
+    for (const item of pending) {
+      const url = new URL(state.scrobbleUrl);
+      url.searchParams.set('identifier', LIBRARY_PROVIDER);
+      url.searchParams.set('key', item.ratingKey);
+      await this.putScrobble(url);
+      const updated = await this.getItem(item.ratingKey, item.type);
+      if (!sameIdentity(item, updated)) throw new Error(`Plex item ${item.ratingKey} changed identity after played-state update.`);
+      if (updated.viewCount <= 0) throw new Error(`Plex did not return played state for item ${item.ratingKey}.`);
     }
   }
 
@@ -791,6 +856,38 @@ export class PlexConnector implements WatchBridgeConnector {
       if (error instanceof PlexRateError) throw error;
       const detail = controller.signal.aborted ? `timed out after ${timeoutMs}ms` : 'failed because of a network error';
       throw new Error(`Plex rate request to ${url.origin}${url.pathname} ${detail}; mutation was not retried.`);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async putScrobble(url: URL): Promise<void> {
+    const state = this.connected();
+    if (url.origin !== state.baseUrl.origin || url.pathname !== state.scrobbleUrl.pathname) {
+      throw new Error('Plex scrobble URL must remain on the discovered played-state endpoint.');
+    }
+    const fetchImpl = state.ctx.fetch ?? fetch;
+    const controller = new AbortController();
+    const configuredTimeout = state.ctx.httpTimeoutMs;
+    const timeoutMs = configuredTimeout === undefined || !Number.isFinite(configuredTimeout) || configuredTimeout <= 0
+      ? DEFAULT_MUTATION_TIMEOUT_MS
+      : Math.min(Math.floor(configuredTimeout), MAX_MUTATION_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetchImpl(url, {
+        method: 'PUT',
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: this.headers(state.ctx, state.ctx.clientIdentifier!, state.product, state.version, state.serverAccessToken, true)
+      });
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status !== 200) {
+        throw new PlexScrobbleError(`Plex scrobble request to ${url.origin}${url.pathname} failed with HTTP ${response.status}; expected 200.`);
+      }
+    } catch (error) {
+      if (error instanceof PlexScrobbleError) throw error;
+      const detail = controller.signal.aborted ? `timed out after ${timeoutMs}ms` : 'failed because of a network error';
+      throw new Error(`Plex scrobble request to ${url.origin}${url.pathname} ${detail}; mutation was not retried.`);
     } finally {
       clearTimeout(timeout);
     }

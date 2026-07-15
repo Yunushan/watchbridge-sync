@@ -7,7 +7,7 @@ import type { ConnectorCapability, ServiceId } from './types.js';
 const EXPECTED_WORKFLOWS: Record<RuntimeWorkflow, ServiceId[]> = {
   'direct-account': ['tmdb', 'trakt', 'simkl', 'myanimelist', 'shikimori', 'annict', 'bangumi', 'jellyfin', 'emby', 'kodi', 'plex'],
   'dedicated-file': ['imdb', 'letterboxd', 'movielens'],
-  'metadata-recommendation': ['thetvdb', 'tvmaze', 'tastedive', 'kitsu'],
+  'metadata-recommendation': ['omdb', 'thetvdb', 'tvmaze', 'tastedive', 'kitsu'],
   'manual-mapping': [
     'tv-time', 'metacritic', 'reelgood', 'serializd', 'allmovie', 'criticker',
     'filmaffinity', 'flickchart', 'tasteio', 'mubi', 'common-sense-media',
@@ -27,13 +27,16 @@ const READINESS_WORKFLOW: Record<Exclude<IntegrationReadiness, 'planned'>, Runti
 const FEATURE_CAPABILITIES = {
   ratings: { read: 'readRatings', write: 'writeRatings', import: 'importRatings' },
   watched: { read: 'readWatched', write: 'writeWatched', import: 'importWatched' },
-  watchlist: { read: 'readWatchlist', write: 'writeWatchlist', import: 'importWatchlist' }
-} as const satisfies Record<string, Record<string, keyof ConnectorCapability>>;
+  watchlist: { read: 'readWatchlist', write: 'writeWatchlist', import: 'importWatchlist' },
+  reviews: { read: 'readReviews', write: 'writeReviews', import: 'importReviews' },
+  following: { read: 'readFollowing', write: 'writeFollowing', import: 'importFollowing' },
+  followers: { read: 'readFollowers' }
+} as const;
 
 describe('shipped runtime support registry', () => {
   it('classifies every selectable service exactly once', () => {
-    expect(SERVICE_DEFINITIONS).toHaveLength(34);
-    expect(new Set(SERVICE_DEFINITIONS.map((service) => service.id)).size).toBe(34);
+    expect(SERVICE_DEFINITIONS).toHaveLength(35);
+    expect(new Set(SERVICE_DEFINITIONS.map((service) => service.id)).size).toBe(35);
     expect(Object.keys(SERVICE_RUNTIME_SUPPORT).sort()).toEqual(SERVICE_DEFINITIONS.map((service) => service.id).sort());
 
     for (const [workflow, expected] of Object.entries(EXPECTED_WORKFLOWS) as Array<[RuntimeWorkflow, ServiceId[]]>) {
@@ -63,7 +66,9 @@ describe('shipped runtime support registry', () => {
           runtime.workflow === 'direct-account' && Boolean(capabilities[keys.read])
         );
         expect(runtime.accountWriteFeatures.includes(feature)).toBe(
-          runtime.workflow === 'direct-account' && Boolean(capabilities[keys.write])
+          runtime.workflow === 'direct-account'
+            && 'write' in keys
+            && Boolean(capabilities[keys.write as keyof ConnectorCapability])
         );
       }
     }
@@ -74,17 +79,21 @@ describe('shipped runtime support registry', () => {
       service.runtime.generatedImportFileFeatures.map((feature) => `${service.id}:${feature}`)
     );
     expect(generators).toEqual([
-      'letterboxd:ratings', 'letterboxd:watched', 'letterboxd:watchlist'
+      'letterboxd:ratings', 'letterboxd:watched', 'letterboxd:watchlist', 'letterboxd:reviews'
     ]);
 
     for (const service of SERVICE_DEFINITIONS) {
       for (const feature of service.runtime.generatedImportFileFeatures) {
-        expect(getCapabilities(service.id)[FEATURE_CAPABILITIES[feature].import]).toBe(true);
+        const keys = FEATURE_CAPABILITIES[feature];
+        expect('import' in keys && getCapabilities(service.id)[keys.import as keyof ConnectorCapability]).toBe(true);
       }
     }
   });
 
-  it('does not expose model-only reviews or social data as executable features', () => {
-    expect(EXECUTABLE_SYNC_FEATURES).toEqual(['ratings', 'watched', 'watchlist']);
+  it('exposes all canonical families while keeping mapped-file social support explicit', () => {
+    expect(EXECUTABLE_SYNC_FEATURES).toEqual(['ratings', 'watched', 'watchlist', 'reviews', 'following', 'followers']);
+    expect(SERVICE_RUNTIME_SUPPORT.letterboxd.fileReadFeatures).toContain('reviews');
+    expect(SERVICE_RUNTIME_SUPPORT.serializd.fileReadFeatures).toEqual(EXECUTABLE_SYNC_FEATURES);
+    expect(SERVICE_RUNTIME_SUPPORT.letterboxd.fileReadFeatures).not.toContain('following');
   });
 });

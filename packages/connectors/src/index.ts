@@ -3,6 +3,7 @@ export * from './letterboxdCsv.js';
 export * from './letterboxdImport.js';
 export * from './imdbCsv.js';
 export * from './tmdb.js';
+export * from './omdb.js';
 export * from './trakt.js';
 export * from './simkl.js';
 export * from './myanimelist.js';

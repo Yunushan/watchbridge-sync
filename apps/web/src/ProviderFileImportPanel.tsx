@@ -4,7 +4,7 @@ export const MAX_PROVIDER_IMPORT_BYTES = 10 * 1024 * 1024;
 
 const PROVIDERS = ['imdb', 'letterboxd', 'movielens'] as const;
 export type ProviderFileService = (typeof PROVIDERS)[number];
-export type ProviderFileKey = 'ratings' | 'watched' | 'watchlist' | 'movies' | 'links';
+export type ProviderFileKey = 'ratings' | 'watched' | 'watchlist' | 'reviews' | 'movies' | 'links';
 
 interface ProviderFileDefinition {
   key: ProviderFileKey;
@@ -15,12 +15,14 @@ interface ProviderFileDefinition {
 const PROVIDER_FILES: Record<ProviderFileService, readonly ProviderFileDefinition[]> = {
   imdb: [
     { key: 'ratings', label: 'IMDb ratings CSV' },
+    { key: 'watched', label: 'IMDb Check-ins CSV (watched membership)' },
     { key: 'watchlist', label: 'IMDb watchlist CSV' }
   ],
   letterboxd: [
     { key: 'ratings', label: 'Letterboxd ratings CSV' },
     { key: 'watched', label: 'Letterboxd watched CSV' },
-    { key: 'watchlist', label: 'Letterboxd watchlist CSV' }
+    { key: 'watchlist', label: 'Letterboxd watchlist CSV' },
+    { key: 'reviews', label: 'Letterboxd reviews CSV' }
   ],
   movielens: [
     { key: 'ratings', label: 'MovieLens ratings.csv', required: true },
@@ -48,6 +50,7 @@ export interface ProviderImportArchive extends Record<string, unknown> {
   ratings?: unknown[];
   watched?: unknown[];
   watchlist?: unknown[];
+  reviews?: unknown[];
 }
 
 export interface ProviderImportResponse extends Record<string, unknown> {
@@ -97,11 +100,11 @@ export function validateProviderFileSelection(
   files: Partial<Record<ProviderFileKey, string>>
 ): void {
   const present = Object.entries(files).filter(([, contents]) => typeof contents === 'string' && contents.length > 0);
-  if (service === 'imdb' && !files.ratings && !files.watchlist) {
-    throw new Error('IMDb import requires a ratings or watchlist CSV file.');
+  if (service === 'imdb' && !files.ratings && !files.watched && !files.watchlist) {
+    throw new Error('IMDb import requires a ratings, Check-ins, or watchlist CSV file.');
   }
-  if (service === 'letterboxd' && !files.ratings && !files.watched && !files.watchlist) {
-    throw new Error('Letterboxd import requires a ratings, watched, or watchlist CSV file.');
+  if (service === 'letterboxd' && !files.ratings && !files.watched && !files.watchlist && !files.reviews) {
+    throw new Error('Letterboxd import requires a ratings, watched, watchlist, or reviews CSV file.');
   }
   if (service === 'movielens' && (!files.ratings || !files.movies)) {
     throw new Error('MovieLens import requires both ratings.csv and movies.csv.');
@@ -145,7 +148,7 @@ export function extractProviderArchive(result: ProviderImportResponse): Provider
   if (!stringValue(candidate.service) || !stringValue(candidate.exportedAt)) {
     throw new Error('The returned backup is missing its service or exportedAt field.');
   }
-  for (const feature of ['ratings', 'watched', 'watchlist'] as const) {
+  for (const feature of ['ratings', 'watched', 'watchlist', 'reviews'] as const) {
     if (candidate[feature] !== undefined && !Array.isArray(candidate[feature])) {
       throw new Error(`The returned backup.${feature} value is not an array.`);
     }
@@ -299,7 +302,7 @@ export function ProviderFileImportPanel() {
 
   return <section className="card provider-file-panel">
     <h2>Provider export files to canonical backup</h2>
-    <p>Convert dedicated IMDb, Letterboxd, or MovieLens exports into a strict <code>watchbridge.backup.v1</code> archive. No scraping or remote account write occurs.</p>
+    <p>Convert dedicated IMDb, Letterboxd, or MovieLens exports, including IMDb Check-ins and Letterboxd reviews, into a strict <code>watchbridge.backup.v1</code> archive. No scraping or remote account write occurs.</p>
     <p className="sensitive-warning">File contents and the optional WatchBridge API key stay only in this page's memory and are submitted without browser credentials. Closing or refreshing this page clears them.</p>
 
     <div className="grid">
@@ -331,7 +334,7 @@ export function ProviderFileImportPanel() {
         </label>)}
       </div>
       <p className="support-footnote">Combined file contents: {combinedBytes.toLocaleString()} / {MAX_PROVIDER_IMPORT_BYTES.toLocaleString()} UTF-8 bytes. The complete serialized request must also stay within 10 MiB.</p>
-      {service === 'letterboxd' && <p className="support-footnote">Letterboxd review exports are not included in this workflow.</p>}
+      {service === 'letterboxd' && <p className="support-footnote">Review text stays in the canonical archive; no review is posted to a remote service unless a future connector explicitly registers a verified writer.</p>}
     </fieldset>
 
     <button type="button" onClick={() => void submit()} disabled={submitting || reading !== undefined || Boolean(selectionError)}>
@@ -342,7 +345,7 @@ export function ProviderFileImportPanel() {
 
     {archive && <div className="success result-details">
       <h3>Canonical backup ready</h3>
-      <p>{arrayLength(archive.ratings)} ratings, {arrayLength(archive.watched)} watched entries, and {arrayLength(archive.watchlist)} watchlist entries.</p>
+      <p>{arrayLength(archive.ratings)} ratings, {arrayLength(archive.watched)} watched entries, {arrayLength(archive.watchlist)} watchlist entries, and {arrayLength(archive.reviews)} reviews.</p>
       <button type="button" onClick={downloadArchive}>Download watchbridge.backup.v1 archive</button>
       <p className="support-footnote">Download this archive, then select it in “Canonical backup to account” below to preview or run a supported account import.</p>
     </div>}

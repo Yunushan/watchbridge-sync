@@ -2,7 +2,7 @@
 
 # WatchBridge Sync
 
-**Free/open-source media data portability workspace for ratings, watched/progress state, watchlists, backups, and safe one-way or two-way sync.**
+**Free/open-source media data portability workspace for ratings, watched/progress state, watchlists, reviews, following/followers, backups, and safe one-way or two-way sync.**
 
 [![ci](https://github.com/Yunushan/watchbridge-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/Yunushan/watchbridge-sync/actions/workflows/ci.yml)
 ![version](https://img.shields.io/badge/version-0.1.0-0ea5e9)
@@ -67,11 +67,12 @@ watchbridge import-provider-files provider-files.json
 watchbridge generate-letterboxd-files backup.json selection.json
 watchbridge execute-backup-sync backup-sync-request.json
 watchbridge recommend recommendation-request.json
+watchbridge cleanup-storage cleanup-request.json
 ```
 
 ## Features
 
-- Canonical media types include reviews and social relationships; shipped sync execution covers one-way and capability-gated direct-account two-way ratings, watched/progress state, and watchlists. Two-way watched reconciliation is latest-state based, not a full play-event-history merge.
+- All six canonical families—ratings, watched/progress state, watchlists, reviews, following, and followers—round-trip through backup v1 and the executor. Provider methods remain capability-gated: social usernames are provider-scoped, following is additive and same-service only, and followers are intrinsically read-only. Two-way watched reconciliation is latest-state based, not a full play-event-history merge.
 - Separate provider-capability and shipped-runtime registries, so selectable, manual, metadata, file, restricted, and direct-account support cannot be confused.
 - Rating conversion engine, including Letterboxd half-star ratings to IMDb 1-10 output.
 - Capability-aware one-way/two-way sync planner that blocks unsupported operations and never invents an unshipped target-file generator.
@@ -83,7 +84,8 @@ watchbridge recommend recommendation-request.json
 - Configurable CSV import for user-owned exports from the 13 registered manual-mapping services, without scraping or browser automation.
 - Web-based one-way/two-way direct-account sync, provider-file conversion, mapped-CSV preview, strict backup upload, file-to-account sync, and authenticated pre-write backup downloads.
 - Backup-first execution preflights every prepared write batch across the selected executable features before the first remote mutation. Durable jobs record `pending`, `succeeded`, or `failed` outcomes and retain pre-write backup/failure details when available.
-- Metadata resolution for TMDb, TVmaze, TheTVDB, and public exact-ID Kitsu anime/manga/episode resources, plus TasteDive recommendations through the API and CLI; these do not imply user-account sync.
+- Opt-in backup/job retention with dry-run cleanup, explicit deletion confirmation, pending-job protection, and reference-safe backup preservation.
+- Metadata resolution for TMDb, exact-IMDb-ID OMDb, TVmaze, TheTVDB, and public exact-ID Kitsu anime/manga/episode resources, plus TasteDive recommendations through the API, CLI, and web panel; these do not imply user-account sync. OMDb content and usage carry non-commercial terms constraints.
 - Bounded outbound timeouts, safe read retries, and sanitized provider errors for connector and OAuth requests.
 - API, web, and CLI applications, with desktop and mobile packaging notes rather than shipped native clients.
 - CI workflow for install, lint, test, and build validation.
@@ -96,6 +98,7 @@ WatchBridge Sync is designed around connector capabilities for:
 | Movies and TV | Metadata and discovery | Anime and international |
 |---|---|---|
 | IMDb | TMDb | MyAnimeList |
+|  | OMDb |  |
 | Rotten Tomatoes | TheTVDB | AniList |
 | Letterboxd | TVmaze | Douban Movie |
 | Trakt | JustWatch | Kinopoisk |
@@ -111,13 +114,13 @@ WatchBridge Sync is designed around connector capabilities for:
 | Kodi |  | Shikimori |
 | Plex |  | Annict |
 
-All **34/34 (100%)** services are selectable, but that is not 34 direct integrations. Current registry-derived coverage is **11/34 (32.4%)** direct-account platforms, **5/34 (14.7%)** with registered account read/write methods for ratings, watched/progress, and watchlist, and **27/34 (79.4%)** with at least one shipped account or file source path. The mutually exclusive workflow catalog is 11 direct-account, 3 dedicated-file, 4 metadata/recommendation, 13 manual-mapping, and 3 restricted services. TMDb overlaps the workflow view in the cross-cutting metadata/recommendation metric, which is **5/34 (14.7%)**.
+All **35/35 (100%)** catalog entries are selectable, but that is not 35 direct integrations. Current registry-derived coverage is **11/35 (31.4%)** direct-account platforms, **6/35 (17.1%)** with registered account read/write methods for the primary ratings, watched/progress, and watchlist families, and **27/35 (77.1%)** with at least one shipped account or file source path. Trakt is the sole **1/35 (2.9%)** direct platform that reads all six families and writes every mutable family; followers are read-only by design. The mutually exclusive workflow catalog is 11 direct-account, 3 dedicated-file, 5 metadata/recommendation, 13 manual-mapping, and 3 restricted services. TMDb overlaps that workflow view in the cross-cutting metadata/recommendation metric, which is **6/35 (17.1%)** after adding OMDb.
 
-Across the **102** platform × executable-feature slots, **70/102 (68.6%)** source slots are supported and **32/102 (31.4%)** are missing; **25/102 (24.5%)** have verified account writes and **77/102 (75.5%)** do not. Letterboxd adds three generated import-file targets, bringing automated target coverage to **28/102 (27.5%)** with **74/102 (72.5%)** missing. Ratings are **25/34 (73.5%)** source, **9/34 (26.5%)** account-write, and **10/34 (29.4%)** automated-target; watched/progress is **23/34 (67.6%)**, **9/34 (26.5%)**, and **10/34 (29.4%)**; watchlist is **22/34 (64.7%)**, **7/34 (20.6%)**, and **8/34 (23.5%)**. Run `watchbridge support-summary`, call `GET /v1/support-summary`, or open the web support panel for the live snapshot.
+Across the **210** platform × canonical-family slots, **116/210 (55.2%)** source slots are supported and **94/210 (44.8%)** are missing; **29/210 (13.8%)** have verified account writes and **181/210 (86.2%)** do not. Letterboxd's generated import files raise automated target coverage to **33/210 (15.7%)**, with **177/210 (84.3%)** missing. Ratings are **25/35 (71.4%)** source, **9/35 (25.7%)** account-write, and **10/35 (28.6%)** automated-target; watched/progress is **25/35 (71.4%)**, **10/35 (28.6%)**, and **11/35 (31.4%)**; watchlist is **23/35 (65.7%)**, **8/35 (22.9%)**, and **9/35 (25.7%)**; reviews are **15/35 (42.9%)**, **1/35 (2.9%)**, and **2/35 (5.7%)**; following is **14/35 (40%)**, **1/35 (2.9%)**, and **1/35 (2.9%)**; followers are **14/35 (40%)**, **0/35 (0%)**, and **0/35 (0%)**. Run `watchbridge support-summary`, call `GET /v1/support-summary`, or open the web support panel for the live snapshot.
 
-File, manual, metadata/recommendation, and restricted workflows are labeled separately. Both **2/2 (100%)** executor direction modes are shipped, but two-way requires two live direct-account connectors with registered read/write methods for every selected feature; record identity and connector fidelity checks can still reject a particular data shape, and backup/file paths remain one-way. Only **3/6 (50%)** canonical feature families execute today, so reviews/following/followers remain model-only and **0/34 (0%)** platforms register direct methods for all six.
+File, manual, metadata/recommendation, and restricted workflows are labeled separately. All **6/6 (100%)** canonical families and both **2/2 (100%)** executor direction modes are shipped. That does not make every provider pair writable: two-way requires two live direct-account connectors with registered read/write methods for every selected feature, following is never inferred across providers, followers have no valid write direction, record identity and fidelity checks can reject a particular shape, and backup/file paths remain one-way.
 
-Shikimori is the fifth full-three-feature direct connector, within strict anime/user-rate boundaries. Annict supports watched and watchlist but not ratings; Kodi supports integer ratings and completed movie/exact-episode play counts but not watchlist; Plex is ratings-only and server-scoped, with a caller-provided token and personal/non-commercial terms caveat. Jellyfin supports ratings plus completed watched state, while Emby supports only completed watched membership; favorites and likes are not counted as watchlist on either service. Kitsu is public exact-ID metadata only and contributes **0/3** account-sync features. WatchBridge can generate user-controlled Letterboxd ratings, watched, and watchlist CSV files from a strict backup through the API, CLI, or web panel; it does not sign in to or upload to Letterboxd. The IMDb-shaped ratings CSV remains a portable export helper only. See [Connector and Runtime Support](docs/CONNECTOR_CAPABILITIES.md) and [Import and Export Formats](docs/IMPORT_EXPORT_FORMATS.md).
+Trakt reads ratings, watched, watchlist, current-user reviews, following, and followers; it writes the first four plus additive following under strict provider checks. Shikimori remains anime/user-rate bounded; Annict supports watched and watchlist but not ratings. Kodi now adds a managed movie watchlist through a library-scoped WatchBridge tag alongside integer ratings and completed movie/exact-episode play counts. Plex is server-scoped ratings plus completed played membership, with a caller-provided token and personal/non-commercial terms caveat. Jellyfin supports ratings plus completed watched state, while Emby supports only completed watched membership; favorites and likes are not counted as watchlist on either service. IMDb dedicated files cover ratings, Check-ins watched membership, and watchlist; Letterboxd files and generated targets cover ratings, watched, watchlist, and reviews. OMDb and Kitsu are metadata-only and contribute no account-sync slots. See [Connector and Runtime Support](docs/CONNECTOR_CAPABILITIES.md) and [Import and Export Formats](docs/IMPORT_EXPORT_FORMATS.md).
 
 ## Rating Example
 

@@ -14,14 +14,15 @@ describe('LetterboxdExportPanel', () => {
     expect(html).toContain('Canonical backup to Letterboxd import files');
     expect(html).toContain('Generate Letterboxd CSV files');
     expect(html).toContain('never signs in to or uploads');
+    expect(html).toContain('reviews');
   });
 
   it('strictly builds a bounded backup request', () => {
     expect(JSON.parse(buildLetterboxdExportRequest(backup, {
-      ratings: true, watched: false, watchlist: false
-    }))).toEqual({ backup, selection: { ratings: true, watched: false, watchlist: false } });
-    expect(() => buildLetterboxdExportRequest({}, { ratings: true, watched: false, watchlist: false })).toThrow('watchbridge.backup.v1');
-    expect(() => buildLetterboxdExportRequest(backup, { ratings: false, watched: false, watchlist: false })).toThrow('Select at least one');
+      ratings: true, watched: false, watchlist: false, reviews: true
+    }))).toEqual({ backup, selection: { ratings: true, watched: false, watchlist: false, reviews: true } });
+    expect(() => buildLetterboxdExportRequest({}, { ratings: true, watched: false, watchlist: false, reviews: false })).toThrow('watchbridge.backup.v1');
+    expect(() => buildLetterboxdExportRequest(backup, { ratings: false, watched: false, watchlist: false, reviews: false })).toThrow('Select at least one');
   });
 
   it('posts without browser credentials and validates every returned file', async () => {
@@ -35,7 +36,7 @@ describe('LetterboxdExportPanel', () => {
     }));
     await expect(requestLetterboxdFiles(
       backup,
-      { ratings: true, watched: false, watchlist: false },
+      { ratings: true, watched: false, watchlist: false, reviews: false },
       'server-key',
       request
     )).resolves.toMatchObject([{ fileName: 'letterboxd-ratings-001.csv', recordCount: 1 }]);
@@ -48,8 +49,7 @@ describe('LetterboxdExportPanel', () => {
       target: 'letterboxd', files: [{ fileName: '../escape.csv', content: 'x' }]
     }));
     await expect(requestLetterboxdFiles(
-      backup, { ratings: true, watched: false, watchlist: false }, '', invalid
+      backup, { ratings: true, watched: false, watchlist: false, reviews: false }, '', invalid
     )).rejects.toThrow('invalid Letterboxd file entry');
   });
 });
-

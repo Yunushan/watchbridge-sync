@@ -17,12 +17,17 @@ import { AccountSyncPanel } from './AccountSyncPanel.js';
 import { SupportPercentagePanel } from './SupportPercentagePanel.js';
 import { ProviderFileImportPanel } from './ProviderFileImportPanel.js';
 import { LetterboxdExportPanel } from './LetterboxdExportPanel.js';
+import { MetadataDiscoveryPanel } from './MetadataDiscoveryPanel.js';
+import { RestoreJobsPanel } from './RestoreJobsPanel.js';
 import './style.css';
 
 interface ManualImportResult {
   ratings: unknown[];
   watched: unknown[];
   watchlist: unknown[];
+  reviews: unknown[];
+  following: unknown[];
+  followers: unknown[];
   issues: Array<{ row: number; column: string; message: string }>;
 }
 
@@ -37,13 +42,21 @@ export function createManualBackupArchive(
     exportedAt,
     ratings: result.ratings,
     watched: result.watched,
-    watchlist: result.watchlist
+    watchlist: result.watchlist,
+    reviews: result.reviews,
+    following: result.following,
+    followers: result.followers
   };
 }
 
 const defaultColumnMap = JSON.stringify({
   ratingScale: { min: 1, max: 10, step: 1, name: 'Ten point' },
-  columns: { title: 'Title', year: 'Year', rating: 'Rating', watchedAt: 'Watched Date', watchlistAt: 'Watchlist Date' }
+  columns: {
+    title: 'Title', year: 'Year', rating: 'Rating', watchedAt: 'Watched Date', watchlistAt: 'Watchlist Date',
+    review: 'Review', reviewedAt: 'Review Date', reviewSpoiler: 'Spoiler',
+    followingUsername: 'Following Username', followerUsername: 'Follower Username',
+    socialDisplayName: 'Display Name', socialProfileUrl: 'Profile URL', followedAt: 'Followed Date'
+  }
 }, null, 2);
 
 const categories: Array<{ id: ServiceCategory; label: string }> = [
@@ -70,7 +83,10 @@ export function App() {
     [canConvert, rating, source, target]
   );
   const operations = useMemo(
-    () => planSync({ source, target, dryRun: true, conflictPolicy, selection: { ratings: true, watched: true, watchlist: true } }),
+    () => planSync({
+      source, target, dryRun: true, conflictPolicy,
+      selection: { ratings: true, watched: true, watchlist: true, reviews: true, following: true, followers: true }
+    }),
     [source, target, conflictPolicy]
   );
 
@@ -138,7 +154,7 @@ export function App() {
       <section className="hero">
         <p className="eyebrow">Free/open-source media data portability</p>
         <h1>WatchBridge Sync</h1>
-        <p>Plan safe one-way and capability-gated two-way sync jobs for ratings, watched/progress state, watchlists, and account backups. Reviews, social data, and full play-event history remain model-only.</p>
+        <p>Plan safe portability for all six canonical families: ratings, watched/progress state, watchlists, reviews, following, and followers. Social usernames stay provider-scoped, follower lists stay read-only, and full repeated-play event history is not inferred.</p>
       </section>
 
       <SupportPercentagePanel />
@@ -179,6 +195,8 @@ export function App() {
         </ol>
       </section>
 
+      <MetadataDiscoveryPanel />
+
       <OAuthPanel />
 
       <AccountSyncPanel />
@@ -189,9 +207,11 @@ export function App() {
 
       <BackupSyncPanel />
 
+      <RestoreJobsPanel />
+
       <section className="card">
         <h2>Manual CSV import</h2>
-        <p>Preview a user-downloaded export from a manual or export-only service. This does not scrape sites or write to an account.</p>
+        <p>Preview a user-downloaded media or social export from a manual service. This does not scrape sites or write to an account.</p>
         <div className="grid">
           <label>Export source
             <select value={manualService} onChange={(e) => setManualService(e.target.value as ServiceId)}>
@@ -200,7 +220,7 @@ export function App() {
           </label>
         </div>
         <label>CSV contents
-          <textarea value={csv} onChange={(e) => setCsv(e.target.value)} placeholder="Title,Rating,Watched Date&#10;Heat,8,2026-01-01" rows={8} />
+          <textarea value={csv} onChange={(e) => setCsv(e.target.value)} placeholder="Title,Rating,Watched Date,Review,Following Username,Profile URL&#10;Heat,8,2026-01-01,Excellent crime film,,&#10;,,,,cinephile,https://example.test/cinephile" rows={8} />
         </label>
         <label>Column mapping JSON
           <textarea value={columnMap} onChange={(e) => setColumnMap(e.target.value)} rows={10} spellCheck={false} />
@@ -210,7 +230,7 @@ export function App() {
         </button>
         {manualError && <p className="error" role="alert">{manualError}</p>}
         {manualResult && <div className="success">
-          <p>Canonical preview: {manualResult.ratings.length} ratings, {manualResult.watched.length} watched entries, {manualResult.watchlist.length} watchlist entries.</p>
+          <p>Canonical preview: {manualResult.ratings.length} ratings, {manualResult.watched.length} watched entries, {manualResult.watchlist.length} watchlist entries, {manualResult.reviews.length} reviews, {manualResult.following.length} following relationships, and {manualResult.followers.length} follower relationships.</p>
           {manualResult.issues.length > 0 && <details>
             <summary>{manualResult.issues.length} row issue{manualResult.issues.length === 1 ? '' : 's'}</summary>
             <ul>

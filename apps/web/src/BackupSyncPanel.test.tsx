@@ -17,12 +17,18 @@ describe('BackupSyncPanel input validation', () => {
       exportedAt: '2026-07-15T00:00:00Z',
       ratings: [],
       watched: [],
-      watchlist: []
+      watchlist: [],
+      reviews: [],
+      following: [],
+      followers: []
     }))).toMatchObject({ schema: 'watchbridge.backup.v1', service: 'letterboxd' });
     expect(() => parseBackupFileText('{"service":"letterboxd"}')).toThrow('watchbridge.backup.v1');
     expect(() => parseBackupFileText(JSON.stringify({
       schema: 'watchbridge.backup.v1', service: 'letterboxd', exportedAt: '2026-07-15T00:00:00Z', ratings: {}
     }))).toThrow('backup.ratings must be an array');
+    expect(() => parseBackupFileText(JSON.stringify({
+      schema: 'watchbridge.backup.v1', service: 'letterboxd', exportedAt: '2026-07-15T00:00:00Z', followers: {}
+    }))).toThrow('backup.followers must be an array');
     expect(() => parseBackupFileText('x'.repeat(MAX_BACKUP_SYNC_BYTES + 1))).toThrow('10 MiB');
   });
 
@@ -43,6 +49,9 @@ describe('BackupSyncPanel input validation', () => {
     expect(html).toContain('Jellyfin');
     expect(html).toContain('Emby');
     expect(html).toContain('Dry run (recommended)');
+    expect(html).toContain('Reviews');
+    expect(html).toContain('Following');
+    expect(html).toContain('Followers (read-only)');
     expect(html).toContain('Target connector context JSON');
     expect(html).toContain('type="password"');
     expect(html).toContain('without browser credentials');

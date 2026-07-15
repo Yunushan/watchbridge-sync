@@ -1,4 +1,10 @@
-import { RATING_SCALES, type CanonicalMediaItem, type CanonicalRating, type CanonicalWatchedEntry } from '@watchbridge/core';
+import {
+  RATING_SCALES,
+  type CanonicalMediaItem,
+  type CanonicalRating,
+  type CanonicalWatchedEntry,
+  type CanonicalWatchlistEntry
+} from '@watchbridge/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectorContext, WatchBridgeConnector } from './base.js';
 import { KodiConnector } from './kodi.js';
@@ -7,6 +13,7 @@ const USER_AGENT = 'watchbridge-test/0.1.0';
 const BASE_URL = 'https://kodi.test/root/jsonrpc';
 const PROFILE_NAME = 'WatchBridge';
 const LIBRARY_SCOPE = '87e4be8a-4cdb-4ba7-97e9-625e87d488cb';
+const WATCHLIST_TAG = `watchbridge:watchlist:${LIBRARY_SCOPE}`;
 
 interface RpcRequest {
   jsonrpc: string;
@@ -82,6 +89,7 @@ function movie(id = 1, overrides: Record<string, unknown> = {}) {
     year: 1995,
     playcount: 0,
     userrating: 0,
+    tag: [],
     uniqueid: { imdb: 'tt0113277', tmdb: '949', tvdb: '100' },
     ...overrides
   };
@@ -224,7 +232,7 @@ describe('KodiConnector', () => {
       libraryCalls.push(request);
       if (request.method === 'VideoLibrary.GetMovies') {
         const start = request.params?.limits.start as number;
-        if (start === 0) return page('Movie', [movie(1, { userrating: 9, playcount: 3 })], 0, 2);
+        if (start === 0) return page('Movie', [movie(1, { userrating: 9, playcount: 3, tag: ['Drama', WATCHLIST_TAG] })], 0, 2);
         return page('Movie', [movie(3, { title: 'Unrated', label: 'Unrated', year: 2022, uniqueid: {}, userrating: 0, playcount: 0 })], 1, 2);
       }
       if (request.method === 'VideoLibrary.GetEpisodes') {
@@ -235,7 +243,12 @@ describe('KodiConnector', () => {
     const backup = await (await connect(fetch)).exportBackup();
 
     expect(backup.service).toBe('kodi');
-    expect(backup).not.toHaveProperty('watchlist');
+    expect(backup.watchlist).toEqual([
+      expect.objectContaining({
+        service: 'kodi', listStatus: 'planned',
+        item: expect.objectContaining({ id: `kodi:${LIBRARY_SCOPE}:movie:1`, kind: 'movie' })
+      })
+    ]);
     expect(backup.ratings).toEqual([
       expect.objectContaining({
         sourceService: 'kodi', value: 9, scale: expect.objectContaining({ min: 1, max: 10, step: 1 }),
@@ -382,6 +395,37 @@ describe('KodiConnector', () => {
     }], false)).rejects.toThrow('movie or exact episode');
   });
 
+  it('uses a scope-namespaced movie tag as an additive watchlist and preserves existing tags', async () => {
+    const mutations: RpcRequest[] = [];
+    const fetch = standardFetch(libraryHandler([movie(1, { tag: ['Drama'] })], [], (request) => {
+      if (request.method === 'VideoLibrary.SetMovieDetails') {
+        mutations.push(request);
+        return 'OK';
+      }
+      if (request.method === 'VideoLibrary.GetMovieDetails') {
+        return { moviedetails: movie(1, { tag: ['Drama', WATCHLIST_TAG] }) };
+      }
+      throw new Error(`Unexpected Kodi method ${request.method}`);
+    }));
+    const connector = await connect(fetch);
+    const entry: CanonicalWatchlistEntry = {
+      item: canonicalMovie(), service: 'trakt', listStatus: 'planned'
+    };
+
+    await connector.importWatchlist([entry], true);
+    expect(mutations).toHaveLength(0);
+    await connector.importWatchlist([entry], false);
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0]?.params).toEqual({ movieid: 1, tag: ['Drama', WATCHLIST_TAG] });
+
+    await expect(connector.importWatchlist([{ ...entry, listedAt: '2026-01-01T00:00:00Z' }], false))
+      .rejects.toThrow('listedAt');
+    await expect(connector.importWatchlist([{
+      ...entry,
+      item: canonicalEpisode()
+    }], false)).rejects.toThrow('must be a movie');
+  });
+
   it('uses conservative IMDb/TMDb/TVDb fallback identity and exact scoped episode IDs', async () => {
     const connector = await connect(standardFetch(libraryHandler([movie()], [episode()])));
     await connector.importRatings([
@@ -412,14 +456,14 @@ describe('KodiConnector', () => {
     await expect(badRead.importRatings([rating()], false)).rejects.toThrow('verification did not confirm userrating=9');
   });
 
-  it('exposes direct ratings and watched support with Basic auth, but no watchlist surface', async () => {
+  it('exposes direct ratings, watched, and managed movie-watchlist support with Basic auth', async () => {
     const connector = await connect(standardFetch(libraryHandler([], [])));
     expect(connector.capabilities).toMatchObject({
       readRatings: true, writeRatings: true, importRatings: true, exportRatings: true,
       readWatched: true, writeWatched: true, importWatched: true, exportWatched: true,
-      readWatchlist: false, writeWatchlist: false, importWatchlist: false, exportWatchlist: false,
+      readWatchlist: true, writeWatchlist: true, importWatchlist: true, exportWatchlist: true,
       apiAuth: 'basic', integrationMode: 'official-api'
     });
-    expect((connector as WatchBridgeConnector).importWatchlist).toBeUndefined();
+    expect((connector as WatchBridgeConnector).importWatchlist).toBeTypeOf('function');
   });
 });

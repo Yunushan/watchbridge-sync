@@ -15,7 +15,7 @@ import {
 const validValues: AccountSyncFormValues = {
   source: 'tmdb',
   target: 'trakt',
-  selection: { ratings: true, watched: true, watchlist: false },
+  selection: { ratings: true, watched: true, watchlist: false, reviews: false, following: false, followers: false },
   conflictPolicy: 'manual',
   direction: 'one-way',
   dryRun: true,
@@ -29,7 +29,7 @@ describe('AccountSyncPanel input safety', () => {
     expect(buildAccountSyncRequest(validValues)).toEqual({
       source: 'tmdb',
       target: 'trakt',
-      selection: { ratings: true, watched: true, watchlist: false },
+      selection: { ratings: true, watched: true, watchlist: false, reviews: false, following: false, followers: false },
       dryRun: true,
       confirmWrite: false,
       direction: 'one-way',
@@ -40,7 +40,7 @@ describe('AccountSyncPanel input safety', () => {
     expect(() => buildAccountSyncRequest({ ...validValues, target: 'tmdb' })).toThrow('must be different');
     expect(() => buildAccountSyncRequest({
       ...validValues,
-      selection: { ratings: false, watched: false, watchlist: false }
+      selection: { ratings: false, watched: false, watchlist: false, reviews: false, following: false, followers: false }
     })).toThrow('at least one feature');
     expect(() => buildAccountSyncRequest({ ...validValues, dryRun: false })).toThrow('explicit confirmation');
     expect(buildAccountSyncRequest({ ...validValues, direction: 'two-way' })).toMatchObject({ direction: 'two-way' });
@@ -64,9 +64,13 @@ describe('AccountSyncPanel input safety', () => {
     expect(html).toContain('Emby');
     expect(html).toContain('Source connector context JSON');
     expect(html).toContain('Target connector context JSON');
-    expect(html).toContain('Dry run (recommended)');
-    expect(html).toContain('I confirm this remote account write');
+    expect(html).toContain('Dry run (required before a matching write)');
+    expect(html).toContain('I reviewed the matching preview and confirm this remote account write');
+    expect(html).toContain('Run a dry-run preview after the latest');
     expect(html).toContain('Two-way reconciliation');
+    expect(html).toContain('Reviews');
+    expect(html).toContain('Following');
+    expect(html).toContain('Followers (read-only)');
     expect(html).toContain('type="password"');
     expect(html).toContain('only in this page&#x27;s memory');
     expect(JSON.parse(CONTEXT_EXAMPLES.emby ?? '{}')).toEqual({
@@ -131,6 +135,10 @@ describe('AccountSyncPanel request boundary', () => {
         targetBackupArtifact: { id: 'backup-id' }
       }
     } satisfies Partial<AccountSyncRequestError>);
+
+    await expect(postAccountSyncJson({ safe: true }, '', async () => Response.json({
+      conflictDetails: [{ accessToken: 'leak' }]
+    }))).rejects.toThrow('invalid conflict detail');
   });
 
   it('renders actions, durable job, pre-write backup, and partial-write warnings', () => {
@@ -142,7 +150,18 @@ describe('AccountSyncPanel request boundary', () => {
       failedDirection: { source: 'trakt', target: 'tmdb' },
       retrySafe: false,
       sourceBackup: { ratings: [{}, {}], watched: [], watchlist: [] },
-      targetBackup: { ratings: [{}], watched: [{}], watchlist: [] }
+      targetBackup: { ratings: [{}], watched: [{}], watchlist: [] },
+      conflictDetails: [{
+        feature: 'ratings', direction: { source: 'trakt', target: 'tmdb' },
+        identity: {
+          label: 'Heat (1995)', kind: 'movie',
+          sourceIds: [{ provider: 'imdb', value: 'tt0113277' }],
+          targetIds: [{ provider: 'imdb', value: 'tt0113277' }]
+        },
+        source: { timestamp: '2026-01-01T00:00:00.000Z', state: 'rated', value: '8 on 1–10' },
+        target: { timestamp: '2026-01-02T00:00:00.000Z', state: 'rated', value: '7 on 1–10' },
+        decision: 'unresolved', reason: 'manual-review-required'
+      }]
     }} />);
     expect(html).toContain('Partial execution details');
     expect(html).toContain('failed-job');
@@ -155,5 +174,8 @@ describe('AccountSyncPanel request boundary', () => {
     expect(html).toContain('download source-backup-id');
     expect(html).toContain('Pre-write source backup');
     expect(html).toContain('Pre-write target backup');
+    expect(html).toContain('Conflict review');
+    expect(html).toContain('manual review is required');
+    expect(html).toContain('imdb:tt0113277');
   });
 });

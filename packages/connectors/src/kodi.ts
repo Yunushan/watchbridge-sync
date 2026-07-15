@@ -5,6 +5,7 @@ import {
   type CanonicalMediaItem,
   type CanonicalRating,
   type CanonicalWatchedEntry,
+  type CanonicalWatchlistEntry,
   type ExternalIds,
   type ServiceId
 } from '@watchbridge/core';
@@ -35,6 +36,7 @@ interface KodiItem {
   providerIds: ExternalIds;
   userRating: number;
   playCount: number;
+  tags: string[];
 }
 
 interface KodiPage {
@@ -67,6 +69,11 @@ interface WatchedIntent {
 interface WatchedWrite {
   item: KodiItem;
   playCount: number;
+}
+
+interface WatchlistWrite {
+  item: KodiItem;
+  tags: string[];
 }
 
 function object(value: unknown, label: string): Record<string, unknown> {
@@ -166,6 +173,28 @@ function firstAiredYear(value: unknown, label: string): number | undefined {
   return integer(Number(match[1]), `${label} year`, 1, 3000);
 }
 
+function tags(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
+  if (value.length > 1_000) throw new Error(`${label} contains too many tags.`);
+  const parsed = value.map((entry, index) => string(entry, `${label}[${index}]`, 500));
+  const seen = new Set<string>();
+  for (const tag of parsed) {
+    const key = tag.toLocaleLowerCase('en-US');
+    if (seen.has(key)) throw new Error(`${label} contains duplicate case-insensitive tags.`);
+    seen.add(key);
+  }
+  return parsed;
+}
+
+function managedWatchlistTag(scope: string): string {
+  return `watchbridge:watchlist:${scope}`;
+}
+
+function hasManagedWatchlistTag(item: KodiItem, scope: string): boolean {
+  const expected = managedWatchlistTag(scope).toLocaleLowerCase('en-US');
+  return item.tags.some((tag) => tag.toLocaleLowerCase('en-US') === expected);
+}
+
 function parseItem(value: unknown, type: KodiItemType, label: string): KodiItem {
   const input = object(value, label);
   const idKey = type === 'Movie' ? 'movieid' : 'episodeid';
@@ -178,11 +207,12 @@ function parseItem(value: unknown, type: KodiItemType, label: string): KodiItem 
   const providerIds = parseProviderIds(input.uniqueid, type, `${label}.uniqueid`);
   if (type === 'Movie') {
     const year = parseYear(input.year, `${label}.year`);
+    const movieTags = tags(input.tag, `${label}.tag`);
     return {
       type, libraryId, title,
       ...(originalTitle !== undefined ? { originalTitle } : {}),
       ...(year !== undefined ? { year } : {}),
-      providerIds, userRating, playCount
+      providerIds, userRating, playCount, tags: movieTags
     };
   }
   const seasonNumber = integer(input.season, `${label}.season`, 0, MAX_INT32);
@@ -192,7 +222,7 @@ function parseItem(value: unknown, type: KodiItemType, label: string): KodiItem 
     type, libraryId, title,
     ...(originalTitle !== undefined ? { originalTitle } : {}),
     ...(year !== undefined ? { year } : {}),
-    seasonNumber, episodeNumber, providerIds, userRating, playCount
+    seasonNumber, episodeNumber, providerIds, userRating, playCount, tags: []
   };
 }
 
@@ -250,6 +280,18 @@ function watchedInput(entry: CanonicalWatchedEntry, label: string): WatchedInten
   if (entry.status === 'watched' && plays !== 1) throw new Error(`${label} with watched status must have exactly plays=1.`);
   if (entry.status === 'rewatched' && plays < 2) throw new Error(`${label} with rewatched status requires plays>=2.`);
   return { mode: 'exact', playCount: plays };
+}
+
+function watchlistInput(entry: CanonicalWatchlistEntry, label: string): void {
+  if (entry.item.kind !== 'movie') {
+    throw new Error(`${label}.item must be a movie; Kodi episode tags are unavailable and aggregate TV-show identity is not yet registered.`);
+  }
+  if (entry.listedAt !== undefined) {
+    throw new Error(`${label}.listedAt is unsupported because Kodi video tags do not retain membership timestamps.`);
+  }
+  if (entry.listStatus !== undefined && entry.listStatus !== 'planned') {
+    throw new Error(`${label}.listStatus must be planned when supplied.`);
+  }
 }
 
 export class KodiConnector implements WatchBridgeConnector {
@@ -314,6 +356,7 @@ export class KodiConnector implements WatchBridgeConnector {
     const scope = this.connected().libraryScope;
     const ratings: CanonicalRating[] = [];
     const watched: CanonicalWatchedEntry[] = [];
+    const watchlist: CanonicalWatchlistEntry[] = [];
     for (const item of items) {
       const canonical = toCanonicalItem(item, scope);
       if (item.userRating > 0) {
@@ -327,8 +370,11 @@ export class KodiConnector implements WatchBridgeConnector {
           plays: item.playCount
         });
       }
+      if (item.type === 'Movie' && hasManagedWatchlistTag(item, scope)) {
+        watchlist.push({ item: canonical, service: 'kodi', listStatus: 'planned' });
+      }
     }
-    return { service: 'kodi', exportedAt: new Date().toISOString(), ratings, watched };
+    return { service: 'kodi', exportedAt: new Date().toISOString(), ratings, watched, watchlist };
   }
 
   async importRatings(ratings: CanonicalRating[], dryRun: boolean): Promise<void> {
@@ -389,6 +435,35 @@ export class KodiConnector implements WatchBridgeConnector {
     }
   }
 
+  async importWatchlist(entries: CanonicalWatchlistEntry[], dryRun: boolean): Promise<void> {
+    if (entries.length > MAX_RECORDS) throw new Error(`Kodi watchlist import exceeds the ${MAX_RECORDS}-record limit.`);
+    entries.forEach((entry, index) => watchlistInput(entry, `Kodi watchlist import[${index}]`));
+    const library = await this.getLibrary();
+    const scope = this.connected().libraryScope;
+    const writes = new Map<string, WatchlistWrite>();
+    for (const entry of entries) {
+      const item = this.resolveItem(entry.item, library);
+      if (item.type !== 'Movie') throw new Error(`Cannot write ${entry.item.title}: Kodi watchlist entries must resolve to movies.`);
+      const key = `${item.type}:${item.libraryId}`;
+      if (!hasManagedWatchlistTag(item, scope)) {
+        writes.set(key, { item, tags: [...item.tags, managedWatchlistTag(scope)] });
+      }
+    }
+    if (dryRun) return;
+    for (const write of writes.values()) {
+      await this.setDetails(write.item, { tag: write.tags });
+      const verified = await this.getDetails(write.item);
+      if (!hasManagedWatchlistTag(verified, scope)) {
+        throw new Error(`Kodi verification did not confirm managed watchlist membership for Movie ${write.item.libraryId}.`);
+      }
+      for (const originalTag of write.item.tags) {
+        if (!verified.tags.some((tag) => tag === originalTag)) {
+          throw new Error(`Kodi verification found that an existing tag was not preserved for Movie ${write.item.libraryId}.`);
+        }
+      }
+    }
+  }
+
   private connected(): ConnectedState {
     if (!this.state?.verified) throw new Error('Kodi connector is not connected.');
     return this.state;
@@ -409,7 +484,7 @@ export class KodiConnector implements WatchBridgeConnector {
     let expectedTotal: number | undefined;
     const method = type === 'Movie' ? 'VideoLibrary.GetMovies' : 'VideoLibrary.GetEpisodes';
     const properties = type === 'Movie'
-      ? ['title', 'originaltitle', 'year', 'playcount', 'userrating', 'uniqueid']
+      ? ['title', 'originaltitle', 'year', 'playcount', 'userrating', 'uniqueid', 'tag']
       : ['title', 'originaltitle', 'firstaired', 'season', 'episode', 'playcount', 'userrating', 'uniqueid'];
     for (let pageNumber = 0; pageNumber < MAX_PAGES; pageNumber += 1) {
       const result = await this.rpc(method, {
@@ -460,7 +535,8 @@ export class KodiConnector implements WatchBridgeConnector {
     return matches[0]!;
   }
 
-  private async setDetails(item: KodiItem, patch: { userrating: number } | { playcount: number }): Promise<void> {
+  private async setDetails(item: KodiItem, patch: { userrating: number } | { playcount: number } | { tag: string[] }): Promise<void> {
+    if ('tag' in patch && item.type !== 'Movie') throw new Error('Kodi managed watchlist tags can be written only to movies.');
     const method = item.type === 'Movie' ? 'VideoLibrary.SetMovieDetails' : 'VideoLibrary.SetEpisodeDetails';
     const idKey = item.type === 'Movie' ? 'movieid' : 'episodeid';
     const result = await this.rpc(method, { [idKey]: item.libraryId, ...patch });
@@ -472,7 +548,7 @@ export class KodiConnector implements WatchBridgeConnector {
     const idKey = item.type === 'Movie' ? 'movieid' : 'episodeid';
     const resultKey = item.type === 'Movie' ? 'moviedetails' : 'episodedetails';
     const properties = item.type === 'Movie'
-      ? ['title', 'originaltitle', 'year', 'playcount', 'userrating', 'uniqueid']
+      ? ['title', 'originaltitle', 'year', 'playcount', 'userrating', 'uniqueid', 'tag']
       : ['title', 'originaltitle', 'firstaired', 'season', 'episode', 'playcount', 'userrating', 'uniqueid'];
     const result = object(await this.rpc(method, { [idKey]: item.libraryId, properties }), `Kodi ${method} result`);
     const verified = parseItem(result[resultKey], item.type, `Kodi ${method} result.${resultKey}`);

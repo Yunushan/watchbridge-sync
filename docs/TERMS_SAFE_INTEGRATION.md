@@ -34,4 +34,6 @@ A connector can move from `manual` to `official-api` only when:
 
 An owner-controlled self-hosted/local API may use request-scoped server credentials when that official interface requires them. Kodi JSON-RPC HTTP Basic credentials are the current narrow case: WatchBridge neither acquires nor persists them, requires an explicit HTTPS endpoint and exact profile/library scope, and production use is subject to the custom-provider-URL network controls. This does not permit collecting a hosted service's site password; Kitsu's documented password grant is therefore not used.
 
-Provider terms remain an independent gate even when endpoints are technically accessible. Plex support is limited to a caller's own server-scoped ratings workflow and does not claim permission beyond Plex's current personal, non-commercial Terms.
+Provider terms remain an independent gate even when endpoints are technically accessible. Plex support is limited to a caller's own server-scoped ratings and completed played-membership workflow and does not claim permission beyond Plex's current personal, non-commercial Terms.
+
+OMDb is similarly terms-gated. WatchBridge accepts a caller-provided API key only for the official HTTPS exact-IMDb-ID metadata route and does not use OMDb title/search, account, scraping, or poster paths. OMDb labels its content [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) and its official [Terms of Use](https://www.omdbapi.com/legal.htm) restrict use to personal, non-commercial purposes; an API key does not remove those obligations.

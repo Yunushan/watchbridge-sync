@@ -111,6 +111,8 @@ watchbridge oauth-trakt-exchange private/trakt-exchange.json
 
 Refresh with `oauth-trakt-refresh` and a request containing `clientId`, `clientSecret`, the same `redirectUri`, and `refreshToken`.
 
+The same request-scoped user token authorizes current-user review export and constrained review creation, plus current-user following/follower export and additive public-profile following. Before posting comments, the connector calls `/users/settings` and requires `permissions.commenting: true`. Before following anyone it requires `permissions.following: true`, verifies the authenticated user identity, snapshots current following, and resolves the complete target batch before the first write. Trakt can temporarily disable either permission when spam protection is triggered, in which case that complete batch fails before any corresponding mutation.
+
 Official reference: [Trakt OAuth authentication](https://docs.trakt.tv/docs/authentication-oauth).
 
 ## MyAnimeList PKCE and refresh
@@ -338,7 +340,7 @@ WatchBridge does not enable Kodi remote control, create a Kodi profile, or acqui
 }
 ```
 
-The URL must end exactly in `/jsonrpc`; embedded URL credentials are forbidden. The API's custom-provider-URL protection means production also requires exact lowercase `WATCHBRIDGE_ALLOW_CUSTOM_PROVIDER_BASE_URLS=true` plus a network allowlist for this host. This opt-in is security-sensitive because API callers can otherwise choose a destination for request-scoped credentials. The connector requires JSON-RPC 13.5, Kodi 21, an exact current-profile match, and read/update permissions. It supports integer ratings and completed movie/exact-episode play counts only, with no watchlist or resume-progress path.
+The URL must end exactly in `/jsonrpc`; embedded URL credentials are forbidden. The API's custom-provider-URL protection means production also requires exact lowercase `WATCHBRIDGE_ALLOW_CUSTOM_PROVIDER_BASE_URLS=true` plus a network allowlist for this host. This opt-in is security-sensitive because API callers can otherwise choose a destination for request-scoped credentials. The connector requires JSON-RPC 13.5, Kodi 21, an exact current-profile match, and read/update permissions. It supports integer ratings, completed movie/exact-episode play counts, and movie-only managed watchlist membership through the library-scoped `watchbridge:watchlist:<kodiLibraryScope>` tag; resume progress and watchlist timestamps remain unsupported.
 
 Official references: [Kodi JSON-RPC overview](https://kodi.wiki/view/JSON-RPC_API) and [Kodi Omega JSON-RPC v13.5](https://kodi.wiki/view/JSON-RPC_API/v13.5).
 
@@ -357,7 +359,7 @@ WatchBridge currently ships no Plex sign-in, PIN, or token-acquisition helper. O
 }
 ```
 
-Do not provide a Plex server `baseUrl`. The connector verifies the Plex account, discovers the selected server and its per-server access token through Plex resources, accepts only credential-free HTTPS connections, and proves the claimed machine identifier before reading or writing. The caller-provided account token remains request-scoped and is not persisted. Support is ratings-only; watched/timeline/scrobble and global watchlist are not enabled.
+Do not provide a Plex server `baseUrl`. The connector verifies the Plex account, discovers the selected server and its per-server access token through Plex resources, accepts only credential-free HTTPS connections, and proves the claimed machine identifier before reading or writing. The caller-provided account token remains request-scoped and is not persisted. Support covers server-scoped ratings plus completed played membership for movies and exact episodes; the global watchlist is not enabled.
 
 Plex's current Terms provide a personal, non-commercial license and impose additional restrictions. Review them before use and obtain any permission required for commercial, hosted, or third-party-benefit deployment. WatchBridge support is not Plex endorsement and is not an authorization helper.
 
@@ -365,7 +367,7 @@ Official references: [Plex Media Server API](https://developer.plex.tv/pms/) and
 
 ## Why Kitsu has no account authorization helper
 
-Kitsu is a metadata/recommendation-workflow entry, not one of the eleven direct-account connectors. The shipped connector makes public exact-ID JSON:API reads for anime, manga, and episodes and sends no authorization header. In the current official source OpenAPI, the user/library-entry paths and schemas needed for account synchronization are commented out, while the remaining authentication chapter describes a password grant. WatchBridge does not collect Kitsu passwords or treat legacy/commented contracts as ratings, watched, or watchlist support, so Kitsu remains **0/3** for account sync.
+Kitsu is a metadata/recommendation-workflow entry, not one of the eleven direct-account connectors. The shipped connector makes public exact-ID JSON:API reads for anime, manga, and episodes and sends no authorization header. In the current official source OpenAPI, the user/library-entry paths and schemas needed for account synchronization are commented out, while the remaining authentication chapter describes a password grant. WatchBridge does not collect Kitsu passwords or treat legacy/commented contracts as account support, so Kitsu remains **0/6** across the canonical account-sync families.
 
 Official references: [rendered Kitsu OpenAPI](https://hummingbird-me.github.io/api-docs/) and [source OpenAPI root](https://github.com/hummingbird-me/api-docs/blob/openapi3/api/kitsu.yml).
 

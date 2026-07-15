@@ -64,6 +64,9 @@ interface FeatureSelection {
   ratings: boolean;
   watched: boolean;
   watchlist: boolean;
+  reviews: boolean;
+  following: boolean;
+  followers: boolean;
 }
 
 interface LoadedBackup {
@@ -86,6 +89,9 @@ interface BackupSummary {
   ratings?: unknown;
   watched?: unknown;
   watchlist?: unknown;
+  reviews?: unknown;
+  following?: unknown;
+  followers?: unknown;
 }
 
 interface BackupSyncResult {
@@ -140,7 +146,7 @@ export function parseBackupFileText(text: string): Record<string, unknown> {
   if (!stringValue(value.service) || !stringValue(value.exportedAt)) {
     throw new Error('The backup must include service and exportedAt fields.');
   }
-  for (const feature of ['ratings', 'watched', 'watchlist'] as const) {
+  for (const feature of ['ratings', 'watched', 'watchlist', 'reviews', 'following', 'followers'] as const) {
     if (value[feature] !== undefined && !Array.isArray(value[feature])) {
       throw new Error(`backup.${feature} must be an array.`);
     }
@@ -207,7 +213,9 @@ function artifactId(value: unknown): string | undefined {
 export function BackupSyncPanel() {
   const [loadedBackup, setLoadedBackup] = useState<LoadedBackup>();
   const [target, setTarget] = useState<ServiceId>('trakt');
-  const [selection, setSelection] = useState<FeatureSelection>({ ratings: true, watched: true, watchlist: true });
+  const [selection, setSelection] = useState<FeatureSelection>({
+    ratings: true, watched: true, watchlist: true, reviews: false, following: false, followers: false
+  });
   const [dryRun, setDryRun] = useState(true);
   const [confirmWrite, setConfirmWrite] = useState(false);
   const [conflictPolicy, setConflictPolicy] = useState<ConflictPolicy>('manual');
@@ -218,7 +226,8 @@ export function BackupSyncPanel() {
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<BackupSyncResult>();
 
-  const selectedCount = Number(selection.ratings) + Number(selection.watched) + Number(selection.watchlist);
+  const selectedCount = Number(selection.ratings) + Number(selection.watched) + Number(selection.watchlist)
+    + Number(selection.reviews) + Number(selection.following) + Number(selection.followers);
 
   async function loadBackup(event: ChangeEvent<HTMLInputElement>) {
     setError(undefined);
@@ -328,7 +337,7 @@ export function BackupSyncPanel() {
 
     {loadingFile && <p role="status">Reading backup…</p>}
     {loadedBackup && <p className="result" role="status">
-      Loaded <strong>{loadedBackup.fileName}</strong> from <strong>{loadedBackup.service}</strong>: {arrayLength(loadedBackup.value.ratings)} ratings, {arrayLength(loadedBackup.value.watched)} watched entries, and {arrayLength(loadedBackup.value.watchlist)} watchlist entries.
+      Loaded <strong>{loadedBackup.fileName}</strong> from <strong>{loadedBackup.service}</strong>: {arrayLength(loadedBackup.value.ratings)} ratings, {arrayLength(loadedBackup.value.watched)} watched entries, {arrayLength(loadedBackup.value.watchlist)} watchlist entries, {arrayLength(loadedBackup.value.reviews)} reviews, {arrayLength(loadedBackup.value.following)} following relationships, and {arrayLength(loadedBackup.value.followers)} follower relationships.
     </p>}
 
     <fieldset>
@@ -337,6 +346,9 @@ export function BackupSyncPanel() {
         <label><input type="checkbox" checked={selection.ratings} onChange={(event) => setFeature('ratings', event.target.checked)} /> Ratings</label>
         <label><input type="checkbox" checked={selection.watched} onChange={(event) => setFeature('watched', event.target.checked)} /> Watched history</label>
         <label><input type="checkbox" checked={selection.watchlist} onChange={(event) => setFeature('watchlist', event.target.checked)} /> Watchlist</label>
+        <label><input type="checkbox" checked={selection.reviews} onChange={(event) => setFeature('reviews', event.target.checked)} /> Reviews</label>
+        <label><input type="checkbox" checked={selection.following} onChange={(event) => setFeature('following', event.target.checked)} /> Following</label>
+        <label><input type="checkbox" checked={selection.followers} onChange={(event) => setFeature('followers', event.target.checked)} /> Followers (read-only)</label>
       </div>
     </fieldset>
 
@@ -372,7 +384,7 @@ export function BackupSyncPanel() {
           {(stringValue(action.reason) ?? stringValue(action.message)) ? ` (${String(stringValue(action.reason) ?? stringValue(action.message))})` : ''}
         </li>)}
       </ul>}
-      {targetBackup && <p>Target snapshot: {arrayLength(targetBackup.ratings)} ratings, {arrayLength(targetBackup.watched)} watched entries, and {arrayLength(targetBackup.watchlist)} watchlist entries.</p>}
+      {targetBackup && <p>Target snapshot: {arrayLength(targetBackup.ratings)} ratings, {arrayLength(targetBackup.watched)} watched entries, {arrayLength(targetBackup.watchlist)} watchlist entries, {arrayLength(targetBackup.reviews)} reviews, {arrayLength(targetBackup.following)} following relationships, and {arrayLength(targetBackup.followers)} follower relationships.</p>}
       {savedBackupId && <p>Pre-write target backup: <BackupDownloadButton id={savedBackupId} apiKey={apiKey} label={`download ${savedBackupId}`} /></p>}
     </div>}
   </section>;

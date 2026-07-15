@@ -25,9 +25,12 @@ describe('App', () => {
     expect(html).toContain('watchbridge.backup.v1');
     expect(html).toContain('Preview backup sync');
     expect(html).toContain('I confirm this remote account write');
+    expect(html).toContain('Backup restore and sync job history');
+    expect(html).toContain('Preview backup restore');
+    expect(html).toContain('Load job history');
     expect(html).toContain('Support percentages');
-    expect(html).toContain('34 / 34 platforms');
-    expect(html).toContain('32.4%');
+    expect(html).toContain('35 / 35 platforms');
+    expect(html).toContain('31.4%');
     expect(html).toContain('Account to account sync');
     expect(html).toContain('Preview account sync');
     expect(html).toContain('Source connector context JSON');
@@ -37,6 +40,13 @@ describe('App', () => {
     expect(html).toContain('Canonical backup to Letterboxd import files');
     expect(html).toContain('Generate Letterboxd CSV files');
     expect(html).toContain('IMDb ratings CSV');
+    expect(html).toContain('Metadata and recommendations');
+    expect(html).toContain('Resolve metadata');
+    expect(html).toContain('Find similar titles with TasteDive');
+    expect(html).toContain('TMDb');
+    expect(html).toContain('TVmaze');
+    expect(html).toContain('TheTVDB');
+    expect(html).toContain('Kitsu');
   });
 });
 
@@ -46,6 +56,9 @@ describe('createManualBackupArchive', () => {
       ratings: [{ id: 'rating' }],
       watched: [],
       watchlist: [],
+      reviews: [{ id: 'review' }],
+      following: [{ id: 'following' }],
+      followers: [{ id: 'follower' }],
       issues: [{ row: 2, column: 'Rating', message: 'Invalid value.' }]
     }, '2026-07-15T00:00:00.000Z');
 
@@ -55,7 +68,10 @@ describe('createManualBackupArchive', () => {
       exportedAt: '2026-07-15T00:00:00.000Z',
       ratings: [{ id: 'rating' }],
       watched: [],
-      watchlist: []
+      watchlist: [],
+      reviews: [{ id: 'review' }],
+      following: [{ id: 'following' }],
+      followers: [{ id: 'follower' }]
     });
     expect(archive).not.toHaveProperty('issues');
   });

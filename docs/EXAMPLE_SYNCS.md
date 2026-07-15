@@ -16,7 +16,7 @@ The library can create a portable IMDb-shaped ratings CSV, but WatchBridge does 
 
 ## Letterboxd provider files to Trakt
 
-1. In the web **Provider export files to canonical backup** panel, select the Letterboxd ratings, watched, and/or watchlist exports. The equivalent offline command is `watchbridge import-provider-files letterboxd-files.json`.
+1. In the web **Provider export files to canonical backup** panel, select the Letterboxd ratings, watched, watchlist, and/or reviews exports. The equivalent offline command is `watchbridge import-provider-files letterboxd-files.json`.
 2. Download/save the resulting strict `watchbridge.backup.v1` archive.
 3. Load it in the web **Canonical backup to account** panel, or place it in a request for `watchbridge execute-backup-sync backup-sync-request.json`.
 4. Select only supported Trakt features and run a dry-run. This creates a durable audit job but performs no remote write.
@@ -27,10 +27,10 @@ The same backup-source route works for IMDb, MovieLens, or a mapped-CSV archive,
 ## Canonical backup to Letterboxd import files
 
 1. Open the web **Canonical backup to Letterboxd import files** panel and choose a strict `watchbridge.backup.v1` archive.
-2. Select ratings, watched, and/or watchlist. Generation rejects non-movie records and watched state the Letterboxd CSV cannot preserve, including in-progress playback, aggregate progress, and play counts above one.
+2. Select ratings, watched, watchlist, and/or reviews. Generation rejects non-movie records and any state the documented Letterboxd CSV cannot preserve, including in-progress playback, aggregate progress, play counts above one, and spoiler-marked reviews.
 3. Generate and download every numbered CSV chunk. Each chunk is at most 1,000,000 UTF-8 bytes.
-4. Review the returned warnings and inspect title matches, converted ratings, and calendar dates.
-5. Upload ratings/watched chunks through Letterboxd's profile importer and watchlist chunks through its watchlist importer.
+4. Review the returned warnings and inspect title matches, converted ratings, review text, and calendar dates. Review timestamps are not transferable because the documented format has no review-date column.
+5. Upload ratings/watched/reviews chunks through Letterboxd's profile importer and watchlist chunks through its watchlist importer.
 
 The API equivalent is `POST /v1/export/letterboxd-files`. Offline, put the feature-selection object in `selection.json` and run `watchbridge generate-letterboxd-files backup.json selection.json`; the CLI prints a JSON bundle whose `files[].content` values must be saved under their corresponding `files[].fileName`. WatchBridge neither signs in to Letterboxd nor uploads the files, so this is a one-way, user-controlled handoff rather than an account write.
 
@@ -109,19 +109,19 @@ A confirmed write persists the current destination snapshot first. If Jellyfin i
 
 Two-way use is limited to another direct connector that also registers watched reads and writes, and every record must fit Emby's narrow completed-membership shape and identity requirements.
 
-## Kodi ratings and completed play counts
+## Kodi ratings, completed play counts, and managed movie watchlist
 
 1. Configure one owner-controlled Kodi Omega 21 host with HTTPS JSON-RPC and enable the production custom-provider-URL opt-in only with an outbound allowlist for that host.
 2. Supply request-scoped `{ "username": "...", "password": "...", "profileName": "Master user", "kodiLibraryScope": "<lowercase UUIDv4>", "baseUrl": "https://media.example/kodi/jsonrpc", "userAgent": "WatchBridge-Sync/0.1.0" }`.
-3. Select ratings and/or watched. The connector verifies JSON-RPC 13.5, the exact profile, and read/update permissions; it supports integer 1–10 `userrating` and completed movie/exact-episode `playcount` only.
-4. Watchlist, resume progress, aggregate TV state, and timestamps are blocked. Exact play-count writes cannot lower existing state.
+3. Select ratings, watched, and/or watchlist. The connector verifies JSON-RPC 13.5, the exact profile, and read/update permissions; it supports integer 1–10 `userrating`, completed movie/exact-episode `playcount`, and a movie watchlist managed by the library-scoped `watchbridge:watchlist:<kodiLibraryScope>` tag.
+4. Native favourites, non-movie watchlists, resume progress, aggregate TV state, and timestamps are blocked. Managed-watchlist writes preserve unrelated tags, and exact play-count writes cannot lower existing state.
 
-## Plex server-scoped ratings
+## Plex server-scoped ratings and completed played membership
 
 1. Obtain an authorized Plex account token outside WatchBridge; no Plex sign-in/PIN helper is shipped. Review Plex's current personal, non-commercial Terms before use.
 2. Supply `{ "accessToken": "...", "clientIdentifier": "watchbridge-installation-id", "plexServerId": "selected-machine-id", "userAgent": "WatchBridge-Sync/0.1.0", "appName": "WatchBridge", "appVersion": "0.1.0" }`. Do not supply a server URL.
-3. Select ratings only. The connector discovers the server and its per-server token, verifies the claimed machine ID, resolves an exact server-scoped library item, writes through the discovered `rate` feature, and rereads the result.
-4. Watched/timeline/scrobble, global watchlist, rating deletion, timestamps, reviews, and cross-server identity are blocked.
+3. Select ratings and/or watched. The connector discovers the server and its per-server token, verifies the claimed machine ID, resolves an exact server-scoped library item, uses the discovered `rate` or timeline `scrobbleKey` feature, and rereads the result.
+4. Watched input is limited to completed membership for movies and exact episodes. Progress, replay counts, rewatched status, timestamps, aggregate show/season state, global watchlist, rating deletion, reviews, and cross-server identity are blocked.
 
 ## Kitsu exact-ID metadata
 
