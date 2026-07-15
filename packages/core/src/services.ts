@@ -23,6 +23,7 @@ export const SERVICE_DEFINITIONS: readonly ServiceDefinition[] = [
   { id: 'letterboxd', label: 'Letterboxd', category: 'movies-tv', readiness: 'file-workflow', runtime: SERVICE_RUNTIME_SUPPORT.letterboxd },
   { id: 'tmdb', label: 'TMDb', category: 'metadata-discovery', readiness: 'implemented', runtime: SERVICE_RUNTIME_SUPPORT.tmdb },
   { id: 'omdb', label: 'OMDb', category: 'metadata-discovery', readiness: 'metadata-only', runtime: SERVICE_RUNTIME_SUPPORT.omdb },
+  { id: 'wikidata', label: 'Wikidata', category: 'metadata-discovery', readiness: 'metadata-only', runtime: SERVICE_RUNTIME_SUPPORT.wikidata },
   { id: 'tv-time', label: 'TV Time', category: 'movies-tv', readiness: 'manual', runtime: SERVICE_RUNTIME_SUPPORT['tv-time'] },
   { id: 'trakt', label: 'Trakt', category: 'movies-tv', readiness: 'implemented', runtime: SERVICE_RUNTIME_SUPPORT.trakt },
   { id: 'simkl', label: 'SIMKL', category: 'movies-tv', readiness: 'implemented', runtime: SERVICE_RUNTIME_SUPPORT.simkl },

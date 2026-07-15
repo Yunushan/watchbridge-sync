@@ -266,6 +266,7 @@ describe('OAuthPanel authorization links', () => {
     expect(html).toContain('does not issue a refresh token');
     expect(html).toContain('type="password"');
     expect(html).toContain('does not store them in local storage or cookies');
+    expect(html).toContain('same-origin <code>/oauth/callback</code> path');
     expect(html).toContain('Callback state (paste from redirect URL)');
 
     const shikimoriSection = html.slice(html.indexOf('<span>Shikimori</span>'));

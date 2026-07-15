@@ -4,6 +4,7 @@ export type ServiceId =
   | 'letterboxd'
   | 'tmdb'
   | 'omdb'
+  | 'wikidata'
   | 'tv-time'
   | 'trakt'
   | 'simkl'
@@ -39,6 +40,8 @@ export type MediaKind = 'movie' | 'tv-show' | 'season' | 'episode' | 'anime' | '
 
 export interface ExternalIds {
   imdb?: string;
+  /** Exact Wikidata Q-item ID, such as Q11424. */
+  wikidata?: string;
   tmdbMovie?: number;
   tmdbTv?: number;
   tvdb?: number;
@@ -194,6 +197,21 @@ export interface SyncSelection {
 
 export type ConflictPolicy = 'source-wins' | 'target-wins' | 'newest-wins' | 'manual';
 
+/** A choice for one exact conflict shown by a prior dry-run preview. */
+export interface SyncConflictResolution {
+  /** Opaque, bounded identifier emitted with the conflict detail. */
+  id: string;
+  /** Select which canonical state should win this matched record. */
+  decision: 'source' | 'target';
+}
+
+/** Explicit user-confirmed mapping between two otherwise non-matching media records. */
+export interface SyncIdentityOverride {
+  feature: keyof SyncSelection;
+  sourceItemId: string;
+  targetItemId: string;
+}
+
 export interface SyncRequest {
   source: ServiceId;
   target: ServiceId;
@@ -201,6 +219,10 @@ export interface SyncRequest {
   dryRun: boolean;
   direction?: 'one-way' | 'two-way';
   conflictPolicy?: ConflictPolicy;
+  /** Per-record choices are accepted only for current manual-review conflicts. */
+  conflictResolutions?: SyncConflictResolution[];
+  /** Bounded per-record mappings; these never alter automatic identity rules. */
+  identityOverrides?: SyncIdentityOverride[];
 }
 
 export interface SyncOperation {

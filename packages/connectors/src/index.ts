@@ -16,6 +16,7 @@ export * from './emby.js';
 export * from './kodi.js';
 export * from './plex.js';
 export * from './tvmaze.js';
+export * from './wikidata.js';
 export * from './thetvdb.js';
 export * from './tastedive.js';
 export * from './movielensCsv.js';

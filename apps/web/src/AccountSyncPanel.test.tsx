@@ -8,6 +8,7 @@ import {
   CONTEXT_EXAMPLES,
   MAX_ACCOUNT_SYNC_BYTES,
   parseAccountConnectorContext,
+  parseIdentityOverrides,
   postAccountSyncJson,
   type AccountSyncFormValues
 } from './AccountSyncPanel.js';
@@ -44,6 +45,28 @@ describe('AccountSyncPanel input safety', () => {
     })).toThrow('at least one feature');
     expect(() => buildAccountSyncRequest({ ...validValues, dryRun: false })).toThrow('explicit confirmation');
     expect(buildAccountSyncRequest({ ...validValues, direction: 'two-way' })).toMatchObject({ direction: 'two-way' });
+    expect(buildAccountSyncRequest({
+      ...validValues,
+      conflictResolutions: [{ id: '0123456789abcdef0123456789abcdef', decision: 'source' }]
+    })).toMatchObject({
+      conflictResolutions: [{ id: '0123456789abcdef0123456789abcdef', decision: 'source' }]
+    });
+    expect(() => buildAccountSyncRequest({
+      ...validValues,
+      conflictResolutions: [{ id: 'not-a-preview-id', decision: 'source' }]
+    })).toThrow('Per-record conflict choices');
+    expect(buildAccountSyncRequest({
+      ...validValues,
+      identityOverridesText: '[{"feature":"ratings","sourceItemId":"movie:source","targetItemId":"movie:target"}]'
+    })).toMatchObject({ identityOverrides: [{ feature: 'ratings', sourceItemId: 'movie:source', targetItemId: 'movie:target' }] });
+  });
+
+  it('accepts only bounded, selected-feature exact identity pairs', () => {
+    expect(parseIdentityOverrides('[{"feature":"ratings","sourceItemId":"movie:source","targetItemId":"movie:target"}]', validValues.selection)).toEqual([
+      { feature: 'ratings', sourceItemId: 'movie:source', targetItemId: 'movie:target' }
+    ]);
+    expect(() => parseIdentityOverrides('[{"feature":"reviews","sourceItemId":"movie:source","targetItemId":"movie:target"}]', validValues.selection)).toThrow('selected feature');
+    expect(() => parseIdentityOverrides('[{"feature":"ratings","sourceItemId":" movie:source","targetItemId":"movie:target"}]', validValues.selection)).toThrow('exact canonical item IDs');
   });
 
   it('requires each connector context to be valid JSON object data', () => {
@@ -64,6 +87,7 @@ describe('AccountSyncPanel input safety', () => {
     expect(html).toContain('Emby');
     expect(html).toContain('Source connector context JSON');
     expect(html).toContain('Target connector context JSON');
+    expect(html).toContain('Exact identity overrides JSON');
     expect(html).toContain('Dry run (required before a matching write)');
     expect(html).toContain('I reviewed the matching preview and confirm this remote account write');
     expect(html).toContain('Run a dry-run preview after the latest');
@@ -152,6 +176,7 @@ describe('AccountSyncPanel request boundary', () => {
       sourceBackup: { ratings: [{}, {}], watched: [], watchlist: [] },
       targetBackup: { ratings: [{}], watched: [{}], watchlist: [] },
       conflictDetails: [{
+        id: '0123456789abcdef0123456789abcdef',
         feature: 'ratings', direction: { source: 'trakt', target: 'tmdb' },
         identity: {
           label: 'Heat (1995)', kind: 'movie',
@@ -162,7 +187,7 @@ describe('AccountSyncPanel request boundary', () => {
         target: { timestamp: '2026-01-02T00:00:00.000Z', state: 'rated', value: '7 on 1–10' },
         decision: 'unresolved', reason: 'manual-review-required'
       }]
-    }} />);
+    }} resolutions={{ '0123456789abcdef0123456789abcdef': 'source' }} onResolve={() => undefined} />);
     expect(html).toContain('Partial execution details');
     expect(html).toContain('failed-job');
     expect(html).toContain('Failed feature: watched');
@@ -176,6 +201,8 @@ describe('AccountSyncPanel request boundary', () => {
     expect(html).toContain('Pre-write target backup');
     expect(html).toContain('Conflict review');
     expect(html).toContain('manual review is required');
+    expect(html).toContain('Resolve this matched record');
+    expect(html).toContain('Use source state');
     expect(html).toContain('imdb:tt0113277');
   });
 });

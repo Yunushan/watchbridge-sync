@@ -1,6 +1,6 @@
 import type { CanonicalMediaItem } from './types.js';
 
-const strongIdKeys = ['imdb', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'shikimori', 'annictWork', 'bangumi', 'anilist', 'douban', 'kinopoisk', 'movielens', 'letterboxdSlug'] as const;
+const strongIdKeys = ['imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'shikimori', 'annictWork', 'bangumi', 'anilist', 'douban', 'kinopoisk', 'movielens', 'letterboxdSlug'] as const;
 
 function sameKitsuId(left: CanonicalMediaItem, right: CanonicalMediaItem): boolean {
   return left.externalIds.kitsu !== undefined

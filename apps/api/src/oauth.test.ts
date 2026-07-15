@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createTmdbV3Session,
@@ -62,6 +65,13 @@ const annictToken = {
 };
 
 afterEach(() => vi.useRealTimers());
+
+const sharedTransactionDirectories: string[] = [];
+afterEach(async () => {
+  delete process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR;
+  delete process.env.WATCHBRIDGE_STORAGE_KEY;
+  await Promise.all(sharedTransactionDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
 
 describe('TMDb v4 user authorization', () => {
   it('binds a 15-minute request token to state without exposing the application token', async () => {
@@ -640,6 +650,37 @@ describe('Annict OAuth', () => {
 });
 
 describe('OAuth provider request safety', () => {
+  it('stores a shared transaction encrypted and lets exactly one exchange claim it', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'watchbridge-oauth-shared-'));
+    sharedTransactionDirectories.push(directory);
+    process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR = directory;
+    process.env.WATCHBRIDGE_STORAGE_KEY = '01'.repeat(32);
+    const started = await startMyAnimeListOAuth({ clientId: 'shared-mal-client', redirectUri: 'https://app.example/oauth/callback' });
+    const names = await readdir(directory);
+    expect(names).toEqual([`${started.state}.json`]);
+    const stored = await readFile(join(directory, names[0]!), 'utf8');
+    expect(stored).toContain('watchbridge.storage.v1');
+    expect(stored).not.toContain('shared-mal-client');
+    expect(stored).not.toContain('code_verifier');
+
+    const exchange = () => exchangeMyAnimeListOAuth(
+      { state: started.state, code: 'shared-code' },
+      vi.fn(async () => Response.json(malToken))
+    );
+    const [first, second] = await Promise.allSettled([exchange(), exchange()]);
+    expect([first, second].filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect([first, second].filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('requires encryption whenever shared OAuth transaction storage is configured', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'watchbridge-oauth-shared-key-'));
+    sharedTransactionDirectories.push(directory);
+    process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR = directory;
+    expect(() => startSimklOAuth({ clientId: 'shared-simkl-client' })).toThrow('requires WATCHBRIDGE_STORAGE_KEY');
+    expect(await readdir(directory)).toEqual([]);
+  });
+
   it('bounds pending in-memory authorization state and reclaims expired slots', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));

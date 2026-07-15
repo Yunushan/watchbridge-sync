@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OAuthCapacityError, OAuthInputError, OAuthProviderError, OAuthTransactionError } from './oauth.js';
-import { app, oauthError } from './server.js';
+import { app, oauthError, withJobLock } from './server.js';
 
 const temporaryBackupDirectories: string[] = [];
 
@@ -22,6 +22,7 @@ afterEach(async () => {
   delete process.env.WATCHBRIDGE_JOB_RETENTION_DAYS;
   delete process.env.WATCHBRIDGE_API_KEY;
   delete process.env.WATCHBRIDGE_STORAGE_KEY;
+  delete process.env.WATCHBRIDGE_OAUTH_VAULT_DIR;
   delete process.env.WATCHBRIDGE_ALLOW_PLAINTEXT_STORAGE_MIGRATION;
   delete process.env.WATCHBRIDGE_ALLOW_CUSTOM_PROVIDER_BASE_URLS;
   await Promise.all(temporaryBackupDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -194,6 +195,32 @@ describe('storage retention cleanup', () => {
     const names = await readdir(jobDirectory);
     expect(names).toHaveLength(1);
     expect(names).not.toContain(`${expiredJobId}.json`);
+  });
+});
+
+describe('shared sync-job locking', () => {
+  it('serializes concurrent owners and reclaims a stale owner lock', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'watchbridge-job-lock-'));
+    temporaryBackupDirectories.push(directory);
+    process.env.WATCHBRIDGE_JOB_DIR = directory;
+    const id = '11111111-1111-4111-8111-111111111111';
+    let active = 0;
+    let maximumActive = 0;
+    const run = () => withJobLock(id, async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      active -= 1;
+    });
+    await Promise.all([run(), run(), run()]);
+    expect(maximumActive).toBe(1);
+
+    const stalePath = join(directory, `.${id}.lock`);
+    await writeFile(stalePath, 'abandoned-owner', 'utf8');
+    const staleAt = new Date(Date.now() - 31_000);
+    await utimes(stalePath, staleAt, staleAt);
+    await expect(withJobLock(id, async () => 'reclaimed')).resolves.toBe('reclaimed');
+    await expect(readFile(stalePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
 
@@ -527,13 +554,13 @@ describe('API access gate', () => {
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     await expect(response.json()).resolves.toMatchObject({
       platforms: {
-        selectable: { supported: 35, percent: 100, missingPercent: 0 },
-        directAccount: { supported: 11, percent: 31.4, missingPercent: 68.6 },
-        fullThreeFeatureDirect: { supported: 6, percent: 17.1 },
-        allModelFeaturesDirect: { supported: 1, percent: 2.9, missingPercent: 97.1, services: ['trakt'] }
+        selectable: { supported: 36, percent: 100, missingPercent: 0 },
+        directAccount: { supported: 11, percent: 30.6, missingPercent: 69.4 },
+        fullThreeFeatureDirect: { supported: 6, percent: 16.7 },
+        allModelFeaturesDirect: { supported: 1, percent: 2.8, missingPercent: 97.2, services: ['trakt'] }
       },
       featureFamilies: { executable: { supported: 6, total: 6, percent: 100, missingPercent: 0 } },
-      featureSlots: { automatedTarget: { supported: 33, total: 210, percent: 15.7, missingPercent: 84.3 } },
+      featureSlots: { automatedTarget: { supported: 33, total: 216, percent: 15.3, missingPercent: 84.7 } },
       directions: { executable: { supported: 2, total: 2, percent: 100, missingPercent: 0 } }
     });
   });
@@ -996,6 +1023,39 @@ describe('metadata resolution endpoint', () => {
     expect(remoteFetch).toHaveBeenCalledTimes(3);
   });
 
+  it('resolves one exact Wikidata Q-item and rejects malformed IDs before a provider request', async () => {
+    const remoteFetch = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe('https://www.wikidata.org/wiki/Special:EntityData/Q11424.json');
+      return Response.json({
+        entities: {
+          Q11424: {
+            id: 'Q11424',
+            labels: { en: { language: 'en', value: 'Film' } },
+            claims: {
+              P31: [{ mainsnak: { datavalue: { value: { id: 'Q11424' } } } }],
+              P345: [{ mainsnak: { datavalue: { value: 'tt0113277' } } }]
+            }
+          }
+        }
+      });
+    });
+    vi.stubGlobal('fetch', remoteFetch);
+    const request = (wikidata: string) => app.request('/v1/metadata/resolve', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        service: 'wikidata', item: { id: 'wikidata:item', kind: 'movie', title: 'Film', externalIds: { wikidata } }, context: {}
+      })
+    });
+
+    const resolved = await request('Q11424');
+    expect(resolved.status).toBe(200);
+    await expect(resolved.json()).resolves.toMatchObject({
+      matches: [{ id: 'wikidata:Q11424', externalIds: { wikidata: 'Q11424', imdb: 'tt0113277' } }]
+    });
+    expect((await request('q11424')).status).toBe(400);
+    expect(remoteFetch).toHaveBeenCalledOnce();
+  });
+
   it('accepts Annict works and only exact paired episode identities', async () => {
     const remoteFetch = vi.fn(async () => Response.json([]));
     vi.stubGlobal('fetch', remoteFetch);
@@ -1233,6 +1293,76 @@ describe('recommendation endpoint', () => {
     } finally {
       process.env.NODE_ENV = previousNodeEnv;
     }
+  });
+});
+
+describe('encrypted OAuth vault', () => {
+  it('requires explicit confirmation/encryption, never returns context, and deletes a stored record', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'watchbridge-oauth-vault-'));
+    temporaryBackupDirectories.push(directory);
+    process.env.WATCHBRIDGE_OAUTH_VAULT_DIR = directory;
+    const context = { accessToken: 'vault-secret-token', apiKey: 'vault-client-id' };
+    const unavailable = await app.request('/v1/oauth/vault', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service: 'trakt', context, confirmStore: true })
+    });
+    expect(unavailable.status).toBe(503);
+    expect(await readdir(directory)).toEqual([]);
+
+    process.env.WATCHBRIDGE_STORAGE_KEY = '01'.repeat(32);
+    const stored = await app.request('/v1/oauth/vault', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service: 'trakt', context, confirmStore: true })
+    });
+    expect(stored.status).toBe(201);
+    const metadata = await stored.json() as { id: string; service: string; accessToken?: string };
+    expect(metadata).toMatchObject({ service: 'trakt' });
+    expect(metadata.accessToken).toBeUndefined();
+    const disk = await readFile(join(directory, `${metadata.id}.json`), 'utf8');
+    expect(disk).toContain('watchbridge.storage.v1');
+    expect(disk).not.toContain('vault-secret-token');
+
+    const deleted = await app.request(`/v1/oauth/vault/${metadata.id}`, { method: 'DELETE' });
+    expect(deleted.status).toBe(200);
+    await expect(deleted.json()).resolves.toEqual({ id: metadata.id, deleted: true });
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('uses a matching vault context for direct account sync without sending secrets again', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'watchbridge-oauth-vault-sync-'));
+    temporaryBackupDirectories.push(directory);
+    process.env.WATCHBRIDGE_OAUTH_VAULT_DIR = directory;
+    process.env.WATCHBRIDGE_STORAGE_KEY = '01'.repeat(32);
+    vi.stubGlobal('fetch', vi.fn(emptyAccountExportFetch));
+    const store = async (service: string, context: Record<string, string>) => {
+      const response = await app.request('/v1/oauth/vault', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service, context, confirmStore: true })
+      });
+      expect(response.status).toBe(201);
+      return (await response.json() as { id: string }).id;
+    };
+    const sourceVaultId = await store('trakt', { accessToken: 'source-vault-token', apiKey: 'source-vault-key' });
+    const targetVaultId = await store('simkl', { accessToken: 'target-vault-token', apiKey: 'target-vault-key' });
+    const response = await app.request('/v1/sync/execute', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'trakt', target: 'simkl', selection: { ratings: true }, dryRun: true,
+        sourceContext: { vaultId: sourceVaultId }, targetContext: { vaultId: targetVaultId }
+      })
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ actions: [{ feature: 'ratings', status: 'skipped' }] });
+
+    const wrongService = await app.request('/v1/sync/execute', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: 'trakt', target: 'simkl', selection: { ratings: true }, dryRun: true,
+        sourceContext: { vaultId: targetVaultId }, targetContext: { vaultId: targetVaultId }
+      })
+    });
+    expect(wrongService.status).toBe(400);
+    await expect(wrongService.json()).resolves.toMatchObject({ error: expect.stringContaining('Both sourceContext') });
   });
 });
 
@@ -1583,6 +1713,48 @@ describe('sync execution endpoint', () => {
     });
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: 'Unknown conflictPolicy.' });
+  });
+
+  it('rejects malformed or duplicate per-record conflict choices before connecting', async () => {
+    for (const conflictResolutions of [
+      [{ id: 'not-a-preview-id', decision: 'source' }],
+      [
+        { id: '0123456789abcdef0123456789abcdef', decision: 'source' },
+        { id: '0123456789abcdef0123456789abcdef', decision: 'target' }
+      ]
+    ]) {
+      const response = await app.request('/v1/sync/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'trakt', target: 'simkl', selection: { ratings: true }, sourceContext: {}, targetContext: {},
+          conflictResolutions
+        })
+      });
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining('conflictResolutions') });
+    }
+  });
+
+  it('rejects malformed, duplicate, or unselected identity overrides before connecting', async () => {
+    for (const identityOverrides of [
+      [{ feature: 'ratings', sourceItemId: ' movie:source', targetItemId: 'movie:target' }],
+      [
+        { feature: 'ratings', sourceItemId: 'movie:source', targetItemId: 'movie:target' },
+        { feature: 'ratings', sourceItemId: 'movie:source', targetItemId: 'movie:target' }
+      ],
+      [{ feature: 'reviews', sourceItemId: 'movie:source', targetItemId: 'movie:target' }]
+    ]) {
+      const response = await app.request('/v1/sync/execute', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'trakt', target: 'simkl', selection: { ratings: true }, sourceContext: {}, targetContext: {},
+          identityOverrides
+        })
+      });
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining('identityOverrides') });
+    }
   });
 
   it('runs a dry-run through the official connector factory with request-scoped credentials', async () => {

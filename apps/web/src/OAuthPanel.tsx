@@ -1,4 +1,5 @@
-import React, { type Dispatch, type SetStateAction, useState } from 'react';
+import React, { type Dispatch, type SetStateAction, useEffect, useState } from 'react';
+import { OAUTH_CALLBACK_CHANNEL, parseOAuthCallbackMessage, type OAuthCallbackMessage } from './OAuthCallbackRelay.js';
 
 interface AuthorizationStart {
   authorizationUrl: string;
@@ -308,6 +309,41 @@ export function OAuthPanel() {
   const [annictAccessToken, setAnnictAccessToken] = useState('');
   const [annictFeedback, setAnnictFeedback] = useState<FlowFeedback>(emptyFeedback);
 
+  function acceptBrowserCallback(
+    provider: string,
+    start: AuthorizationStart | undefined,
+    callback: OAuthCallbackMessage,
+    setState: (state: string) => void,
+    setCode?: (code: string) => void,
+    setFeedback?: Dispatch<SetStateAction<FlowFeedback>>
+  ): boolean {
+    if (!start || callback.state !== start.state) return false;
+    if (callback.error) {
+      setFeedback?.({ busy: false, error: `${provider} authorization was not completed: ${callback.error}${callback.errorDescription ? ` (${callback.errorDescription})` : ''}.` });
+      return true;
+    }
+    setState(callback.state);
+    if (callback.code && setCode) setCode(callback.code);
+    setFeedback?.({ busy: false, status: `${provider} callback received from the same-origin relay. Review the filled fields, then exchange it.` });
+    return true;
+  }
+
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel(OAUTH_CALLBACK_CHANNEL);
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      const callback = parseOAuthCallbackMessage(event.data);
+      if (!callback) return;
+      if (acceptBrowserCallback('TMDb', tmdbBrowser, callback, setTmdbState, undefined, setTmdbFeedback)) return;
+      if (acceptBrowserCallback('Trakt', traktBrowser, callback, setTraktState, setTraktCode, setTraktFeedback)) return;
+      if (acceptBrowserCallback('MyAnimeList', malBrowser, callback, setMalState, setMalCode, setMalFeedback)) return;
+      if (acceptBrowserCallback('Simkl', simklBrowser, callback, setSimklState, setSimklCode, setSimklFeedback)) return;
+      if (acceptBrowserCallback('Shikimori', shikimoriBrowser, callback, setShikimoriState, setShikimoriCode, setShikimoriFeedback)) return;
+      acceptBrowserCallback('Annict', annictBrowser, callback, setAnnictState, setAnnictCode, setAnnictFeedback);
+    };
+    return () => channel.close();
+  }, [tmdbBrowser, traktBrowser, malBrowser, simklBrowser, shikimoriBrowser, annictBrowser]);
+
   function currentShikimoriState(): ShikimoriOAuthState {
     return {
       clientId: shikimoriClientId,
@@ -359,7 +395,7 @@ export function OAuthPanel() {
       const start = parseAuthorizationStart(body);
       setTmdbBrowser(start);
       setTmdbState('');
-      return { status: 'TMDb authorization prepared. Approve the request, then paste the state from the callback URL below.' };
+      return { status: 'TMDb authorization prepared. If your registered redirect is this app’s /oauth/callback route, its callback tab fills this state automatically; otherwise paste it below.' };
     });
   }
 
@@ -438,7 +474,7 @@ export function OAuthPanel() {
       const start = parseAuthorizationStart(body);
       setTraktBrowser(start);
       setTraktState('');
-      return { status: 'Browser authorization prepared. Open the link, then paste both the callback code and callback state below.' };
+      return { status: 'Browser authorization prepared. If your registered redirect is this app’s /oauth/callback route, its callback tab fills the code and state automatically; otherwise paste them below.' };
     });
   }
 
@@ -467,7 +503,7 @@ export function OAuthPanel() {
       const start = parseAuthorizationStart(body);
       setMalBrowser(start);
       setMalState('');
-      return { status: 'MyAnimeList authorization prepared. Open the link, then paste both the callback code and callback state below.' };
+      return { status: 'MyAnimeList authorization prepared. This app’s /oauth/callback route can fill the callback fields automatically; otherwise paste them below.' };
     });
   }
 
@@ -498,7 +534,7 @@ export function OAuthPanel() {
       const start = parseAuthorizationStart(body);
       setSimklBrowser(start);
       setSimklState('');
-      return { status: 'Simkl authorization prepared. Open the link, then paste both the callback code and callback state below.' };
+      return { status: 'Simkl authorization prepared. This app’s /oauth/callback route can fill the callback fields automatically; otherwise paste them below.' };
     });
   }
 
@@ -515,7 +551,7 @@ export function OAuthPanel() {
       const start = parseAuthorizationStart(body);
       setShikimoriBrowser(start);
       setShikimoriState('');
-      return { status: 'Shikimori authorization prepared. Open the link, then paste both the callback code and callback state below.' };
+      return { status: 'Shikimori authorization prepared. This app’s /oauth/callback route can fill the callback fields automatically; otherwise paste them below.' };
     });
   }
 
@@ -541,7 +577,7 @@ export function OAuthPanel() {
       return {
         status: usesOob
           ? 'Annict OOB authorization prepared. Open the link, copy the displayed code, and use the retained transaction state below.'
-          : 'Annict authorization prepared. Open the link, then paste both the callback code and callback state below.'
+          : 'Annict authorization prepared. This app’s /oauth/callback route can fill the callback fields automatically; otherwise paste them below.'
       };
     });
   }
@@ -615,6 +651,7 @@ export function OAuthPanel() {
         <button type="button" className="secondary" onClick={clearSensitiveValues}>Clear sensitive values</button>
       </div>
       <p className="sensitive-warning"><strong>Handle token responses like passwords.</strong> Copy them to a secure credential store. Closing or refreshing this page clears the panel.</p>
+      <p className="oauth-status">For supported browser flows, you may register this app’s same-origin <code>/oauth/callback</code> path. Its callback tab relays only the one-time code/state to this open page through browser memory, clears its own URL, and still requires this page to validate the state before exchange. Manual callback fields remain available as a fallback.</p>
       <label className="api-key-field">Optional WatchBridge API key
         <input
           type="password"

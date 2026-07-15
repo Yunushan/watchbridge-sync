@@ -9,22 +9,22 @@ A provider capability never creates a runtime promise. In particular, a provider
 
 ## Current implementation snapshot
 
-- **35/35 (100%)** services are selectable catalog entries; **0/35 (0%)** are missing from the catalog.
-- **11/35 (31.4%)** have repository-tested direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, Shikimori, Annict, Bangumi, Jellyfin, Emby, Kodi, and Plex; **24/35 (68.6%)** do not.
-- **3/35 (8.6%)** have dedicated user-file readers: IMDb, Letterboxd, and MovieLens; **32/35 (91.4%)** do not.
-- **5/35 (14.3%)** are metadata/recommendation workflow integrations: OMDb, TVmaze, TheTVDB, TasteDive, and Kitsu; **30/35 (85.7%)** are not in that workflow.
-- **13/35 (37.1%)** use the generic mapped-CSV path when the user has a lawful export; **22/35 (62.9%)** do not.
-- **3/35 (8.6%)** are restricted: Rotten Tomatoes, JustWatch, and AniList; **32/35 (91.4%)** are not restricted.
+- **36/36 (100%)** services are selectable catalog entries; **0/36 (0%)** are missing from the catalog.
+- **11/36 (30.6%)** have repository-tested direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, Shikimori, Annict, Bangumi, Jellyfin, Emby, Kodi, and Plex; **25/36 (69.4%)** do not.
+- **3/36 (8.3%)** have dedicated user-file readers: IMDb, Letterboxd, and MovieLens; **33/36 (91.7%)** do not.
+- **6/36 (16.7%)** are metadata/recommendation workflow integrations: OMDb, Wikidata, TVmaze, TheTVDB, TasteDive, and Kitsu; **30/36 (83.3%)** are not in that workflow.
+- **13/36 (36.1%)** use the generic mapped-CSV path when the user has a lawful export; **23/36 (63.9%)** do not.
+- **3/36 (8.3%)** are restricted: Rotten Tomatoes, JustWatch, and AniList; **33/36 (91.7%)** are not restricted.
 
 Additional completion views, derived from the same registry:
 
-- **6/35 (17.1%)** register direct account read and write methods for the primary ratings, watched/progress, and watchlist families: Trakt, Simkl, MyAnimeList, Shikimori, Bangumi, and Kodi; **29/35 (82.9%)** do not. This is method coverage, not a promise that every cross-provider record has sufficient identity or lossless shape to write.
-- **1/35 (2.9%)** registers reads for all six canonical families and writes for every mutable family: Trakt. The other **34/35 (97.1%)** do not. Followers are excluded from the mutable-family requirement because follower membership has no valid write operation.
-- **27/35 (77.1%)** have at least one shipped account or file source path. The missing **8/35 (22.9%)** are the five metadata/recommendation workflow entries and three restricted entries.
-- **6/35 (17.1%)** expose metadata resolution or recommendations: TMDb, OMDb, TVmaze, TheTVDB, TasteDive, and Kitsu. This cross-cutting metric overlaps the mutually exclusive workflow categories because TMDb is a direct-account platform.
-- Across the **210** platform × canonical-family source slots, **116/210 (55.2%)** are readable through an account/file path and **94/210 (44.8%)** are missing.
-- Across the same **210** target slots, **29/210 (13.8%)** have a verified account write and **181/210 (86.2%)** do not. Four Letterboxd slots generate user-controlled import files, so total automated target coverage is **33/210 (15.7%)** and **177/210 (84.3%)** are missing. File generation is not a Letterboxd account write.
-- The feature-level split is: ratings **25/35 (71.4%)** source, **9/35 (25.7%)** account-write, **10/35 (28.6%)** automated-target; watched/progress **25/35 (71.4%)**, **10/35 (28.6%)**, **11/35 (31.4%)**; watchlist **23/35 (65.7%)**, **8/35 (22.9%)**, **9/35 (25.7%)**; reviews **15/35 (42.9%)**, **1/35 (2.9%)**, **2/35 (5.7%)**; following **14/35 (40%)**, **1/35 (2.9%)**, **1/35 (2.9%)**; followers **14/35 (40%)**, **0/35 (0%)**, **0/35 (0%)**.
+- **6/36 (16.7%)** register direct account read and write methods for the primary ratings, watched/progress, and watchlist families: Trakt, Simkl, MyAnimeList, Shikimori, Bangumi, and Kodi; **30/36 (83.3%)** do not. This is method coverage, not a promise that every cross-provider record has sufficient identity or lossless shape to write.
+- **1/36 (2.8%)** registers reads for all six canonical families and writes for every mutable family: Trakt. The other **35/36 (97.2%)** do not. Followers are excluded from the mutable-family requirement because follower membership has no valid write operation.
+- **27/36 (75%)** have at least one shipped account or file source path. The missing **9/36 (25%)** are the six metadata/recommendation workflow entries and three restricted entries.
+- **7/36 (19.4%)** expose metadata resolution or recommendations: TMDb, OMDb, Wikidata, TVmaze, TheTVDB, TasteDive, and Kitsu. This cross-cutting metric overlaps the mutually exclusive workflow categories because TMDb is a direct-account platform.
+- Across the **216** platform × canonical-family source slots, **116/216 (53.7%)** are readable through an account/file path and **100/216 (46.3%)** are missing.
+- Across the same **216** target slots, **29/216 (13.4%)** have a verified account write and **187/216 (86.6%)** do not. Four Letterboxd slots generate user-controlled import files, so total automated target coverage is **33/216 (15.3%)** and **183/216 (84.7%)** are missing. File generation is not a Letterboxd account write.
+- The feature-level split is: ratings **25/36 (69.4%)** source, **9/36 (25%)** account-write, **10/36 (27.8%)** automated-target; watched/progress **25/36 (69.4%)**, **10/36 (27.8%)**, **11/36 (30.6%)**; watchlist **23/36 (63.9%)**, **8/36 (22.2%)**, **9/36 (25%)**; reviews **15/36 (41.7%)**, **1/36 (2.8%)**, **2/36 (5.6%)**; following **14/36 (38.9%)**, **1/36 (2.8%)**, **1/36 (2.8%)**; followers **14/36 (38.9%)**, **0/36 (0%)**, **0/36 (0%)**.
 - **6/6 (100%)** canonical feature families are executable: ratings, watched/progress, watchlist, reviews, following, and followers. **0/6 (0%)** remain model-only.
 - **2/2 (100%)** executor direction modes are shipped: one-way and capability-gated two-way; **0/2 (0%)** are missing. This mode metric does not claim universal pair or data-shape compatibility.
 
@@ -36,7 +36,7 @@ The five workflow categories below are exhaustive and mutually exclusive. Cross-
 |---|---|---|
 | Direct account | TMDb, Trakt, Simkl, MyAnimeList, Shikimori, Annict, Bangumi, Jellyfin, Emby, Kodi, Plex | User-authorized one-way account transfer and capability-gated two-way reconciliation for the features listed below. |
 | Dedicated file | IMDb, Letterboxd, MovieLens | Strict service-specific file manifests produce validated backup-v1 sources through the API, offline CLI, or web panel. Letterboxd additionally has a verified ratings/watched/watchlist/reviews target-file generator. |
-| Metadata/recommendation | OMDb, TVmaze, TheTVDB, TasteDive, Kitsu | Identifier/metadata resolution or recommendations; no user-account data sync. |
+| Metadata/recommendation | OMDb, Wikidata, TVmaze, TheTVDB, TasteDive, Kitsu | Identifier/metadata resolution or recommendations; no user-account data sync. |
 | Manual mapping | TV Time, Metacritic, Reelgood, Serializd, AllMovie, Criticker, FilmAffinity, Flickchart, Taste.io, MUBI, Common Sense Media, Douban Movie, Kinopoisk | Generic mapped CSV to all six canonical families when a lawful user-owned export has the mapped columns. WatchBridge neither fetches these services nor guarantees that they offer an export. |
 | Restricted | Rotten Tomatoes, JustWatch, AniList | No connector or mapped-file workflow until required approval/access is obtained. |
 
@@ -190,5 +190,11 @@ Kitsu is deliberately narrower than a search connector. It performs unauthentica
 Kitsu contributes metadata but **0/6 canonical account-sync families**. In the current official source OpenAPI, user/library-entry paths and their schemas are not active contracts, while the remaining authentication material describes a password grant. WatchBridge does not collect a Kitsu password or infer account methods from legacy or commented material. The metadata connector therefore sends no authorization header and exports only an empty metadata-only backup envelope.
 
 Official contracts: [rendered Kitsu OpenAPI](https://hummingbird-me.github.io/api-docs/), [source OpenAPI root](https://github.com/hummingbird-me/api-docs/blob/openapi3/api/kitsu.yml), and the exact [anime](https://github.com/hummingbird-me/api-docs/blob/openapi3/api/paths/media/anime_id.yml), [manga](https://github.com/hummingbird-me/api-docs/blob/openapi3/api/paths/media/manga_id.yml), and [episode](https://github.com/hummingbird-me/api-docs/blob/openapi3/api/paths/media/episodes_id.yml) route definitions.
+
+### Wikidata metadata boundary
+
+Wikidata is a public metadata-only connector for one exact canonical Wikidata Q-item at a time. It sends an HTTPS GET only to the Special:EntityData Q-item JSON route, requires an identifying single-line User-Agent, validates the returned entity ID, English label, direct instance-of media type, and bounded publication year, and may retain a valid IMDb identifier exposed by the entity. It deliberately does not call text search, SPARQL, REST edits, entity history, bulk routes, or account/user-data endpoints. The connector supports direct film, TV-series/program, episode, anime, and manga instance types; other or indirect types fail closed. Wikidata content data is CC0; WatchBridge still asks deployers to identify Wikidata as a data source where appropriate.
+
+Official references: [Wikidata data-access guidance](https://www.wikidata.org/wiki/Help:Data_access) and the [versioned Wikibase REST API](https://www.wikidata.org/wiki/Wikidata:REST_API/en).
 
 See [Manual CSV Import](MANUAL_CSV_IMPORT.md) and [Sync Execution](SYNC_EXECUTION.md) for the executable file-to-account and account-to-account paths.

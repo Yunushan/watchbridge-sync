@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { decodeStoredJson, encodeStoredJson, parseStorageKey } from './storageCrypto.js';
 
 const TRAKT_API_URL = 'https://api.trakt.tv';
 const TRAKT_AUTH_URL = 'https://trakt.tv/oauth/authorize';
@@ -141,6 +144,58 @@ interface OAuthTransaction {
 }
 
 const oauthTransactions = new Map<string, OAuthTransaction>();
+
+function sharedOAuthTransactionDirectory(): string | undefined {
+  const directory = process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR;
+  if (!directory) return undefined;
+  const key = parseStorageKey(process.env.WATCHBRIDGE_STORAGE_KEY);
+  if (!key) throw new OAuthTransactionError('Shared OAuth transaction storage requires WATCHBRIDGE_STORAGE_KEY.');
+  key.fill(0);
+  return directory;
+}
+
+function transactionFile(directory: string, state: string): string {
+  return join(directory, `${state}.json`);
+}
+
+function parseSharedTransaction(stored: string, state: string): OAuthTransaction | undefined {
+  try {
+    const decoded = decodeStoredJson(stored, 'oauth-transaction', state);
+    const value = JSON.parse(decoded.plaintext) as unknown;
+    if (!isRecord(value) || typeof value.provider !== 'string' || !['tmdb', 'trakt', 'myanimelist', 'simkl', 'shikimori', 'annict'].includes(value.provider)
+      || !isPositiveInteger(value.expiresAt) || value.expiresAt > Date.now() + TMDB_TRANSACTION_TTL_MS) return undefined;
+    const optionalKeys = ['clientId', 'codeVerifier', 'applicationToken', 'requestToken', 'redirectUri', 'appName', 'appVersion', 'userAgent'] as const;
+    if (Object.keys(value).some((key) => key !== 'provider' && key !== 'expiresAt' && !optionalKeys.includes(key as typeof optionalKeys[number]))) return undefined;
+    for (const key of optionalKeys) if (value[key] !== undefined && (typeof value[key] !== 'string' || value[key].length > MAX_TOKEN_LENGTH)) return undefined;
+    return value as unknown as OAuthTransaction;
+  } catch {
+    return undefined;
+  }
+}
+
+function pruneSharedOAuthTransactions(directory: string, now: number): number {
+  let active = 0;
+  for (const name of readdirSync(directory)) {
+    const transactionName = name.endsWith('.json') ? name : undefined;
+    const claimMatch = /^([A-Za-z0-9_-]{43})\.json\.[A-Za-z0-9_-]+\.claim$/.exec(name);
+    if (!transactionName && !claimMatch) continue;
+    const state = transactionName ? transactionName.slice(0, -5) : claimMatch![1]!;
+    if (!/^[A-Za-z0-9_-]{43}$/.test(state)) continue;
+    const path = join(directory, name);
+    let transaction: OAuthTransaction | undefined;
+    try {
+      transaction = parseSharedTransaction(readFileSync(path, 'utf8'), state);
+    } catch {
+      transaction = undefined;
+    }
+    if (!transaction || transaction.expiresAt <= now) {
+      try { unlinkSync(path); } catch { /* concurrent consumer/pruner owns the outcome */ }
+      continue;
+    }
+    if (transactionName) active += 1;
+  }
+  return active;
+}
 
 export class OAuthInputError extends Error {
   constructor(message: string) {
@@ -389,6 +444,25 @@ function storeTransaction(
   ttlMs = OAUTH_TRANSACTION_TTL_MS
 ): { state: string; expiresAt: number } {
   const now = Date.now();
+  const sharedDirectory = sharedOAuthTransactionDirectory();
+  if (sharedDirectory) {
+    mkdirSync(sharedDirectory, { recursive: true, mode: 0o700 });
+    if (pruneSharedOAuthTransactions(sharedDirectory, now) >= MAX_PENDING_OAUTH_TRANSACTIONS) {
+      throw new OAuthCapacityError('Too many OAuth authorization attempts are pending. Try again later.');
+    }
+    const expiresAt = now + ttlMs;
+    const record: OAuthTransaction = { provider, ...transaction, expiresAt };
+    const finalPath = transactionFile(sharedDirectory, state);
+    const temporaryPath = `${finalPath}.${randomBase64Url(12)}.tmp`;
+    try {
+      writeFileSync(temporaryPath, encodeStoredJson(JSON.stringify(record), 'oauth-transaction', state), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      renameSync(temporaryPath, finalPath);
+    } catch {
+      try { unlinkSync(temporaryPath); } catch { /* no temporary file remains */ }
+      throw new OAuthTransactionError('Shared OAuth transaction storage is unavailable.');
+    }
+    return { state, expiresAt };
+  }
   pruneOAuthTransactions(now);
   if (oauthTransactions.size >= MAX_PENDING_OAUTH_TRANSACTIONS) {
     throw new OAuthCapacityError('Too many OAuth authorization attempts are pending. Try again later.');
@@ -405,6 +479,31 @@ function createTransaction(provider: OAuthProvider, transaction: Omit<OAuthTrans
 function consumeTransaction(provider: OAuthProvider, state: string): OAuthTransaction {
   if (!isBoundedString(state, 128, false)) {
     throw new OAuthTransactionError('The OAuth state is unknown or has already been used. Start authorization again.');
+  }
+  const sharedDirectory = sharedOAuthTransactionDirectory();
+  if (sharedDirectory) {
+    const finalPath = transactionFile(sharedDirectory, state);
+    const claimPath = `${finalPath}.${randomBase64Url(12)}.claim`;
+    try {
+      renameSync(finalPath, claimPath);
+    } catch {
+      throw new OAuthTransactionError('The OAuth state is unknown or has already been used. Start authorization again.');
+    }
+    let transaction: OAuthTransaction | undefined;
+    try {
+      transaction = parseSharedTransaction(readFileSync(claimPath, 'utf8'), state);
+    } catch {
+      transaction = undefined;
+    } finally {
+      try { unlinkSync(claimPath); } catch { /* the claimed record must never be reused */ }
+    }
+    if (!transaction || transaction.provider !== provider) {
+      throw new OAuthTransactionError('The OAuth state is unknown or has already been used. Start authorization again.');
+    }
+    if (transaction.expiresAt <= Date.now()) {
+      throw new OAuthTransactionError('The OAuth authorization attempt expired. Start authorization again.');
+    }
+    return transaction;
   }
   const transaction = oauthTransactions.get(state);
   if (!transaction || transaction.provider !== provider) {

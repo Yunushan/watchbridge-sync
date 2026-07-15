@@ -87,7 +87,7 @@ function nonNegativeInteger(value: unknown, label: string): number | undefined {
 
 function externalIds(value: unknown, label: string): ExternalIds {
   const input = strictRecord(value, label, [
-    'imdb', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist',
+    'imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist',
     'douban', 'kinopoisk', 'movielens', 'letterboxdSlug'
   ]);
   const output: ExternalIds = {};
@@ -95,7 +95,7 @@ function externalIds(value: unknown, label: string): ExternalIds {
     const parsed = positiveInteger(input[key], `${label}.${key}`);
     if (parsed !== undefined) output[key] = parsed;
   }
-  for (const key of ['imdb', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'douban', 'kinopoisk', 'letterboxdSlug'] as const) {
+  for (const key of ['imdb', 'wikidata', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'douban', 'kinopoisk', 'letterboxdSlug'] as const) {
     const parsed = optionalString(input[key], `${label}.${key}`, 500);
     if (parsed !== undefined) output[key] = parsed;
   }
@@ -128,6 +128,9 @@ function mediaItem(value: unknown, label: string): CanonicalMediaItem {
     throw new Error(`${label}.episodeNumber is valid only for an episode item.`);
   }
   const ids = externalIds(input.externalIds, `${label}.externalIds`);
+  if (ids.wikidata !== undefined && !/^Q[1-9]\d{0,11}$/.test(ids.wikidata)) {
+    throw new Error(label + '.externalIds.wikidata must be an exact Wikidata Q-item ID.');
+  }
   if (ids.kitsu !== undefined && kind !== 'anime' && kind !== 'manga' && kind !== 'episode') {
     throw new Error(`${label}.externalIds.kitsu requires an anime, manga, or episode item.`);
   }

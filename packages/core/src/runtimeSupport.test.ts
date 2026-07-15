@@ -7,7 +7,7 @@ import type { ConnectorCapability, ServiceId } from './types.js';
 const EXPECTED_WORKFLOWS: Record<RuntimeWorkflow, ServiceId[]> = {
   'direct-account': ['tmdb', 'trakt', 'simkl', 'myanimelist', 'shikimori', 'annict', 'bangumi', 'jellyfin', 'emby', 'kodi', 'plex'],
   'dedicated-file': ['imdb', 'letterboxd', 'movielens'],
-  'metadata-recommendation': ['omdb', 'thetvdb', 'tvmaze', 'tastedive', 'kitsu'],
+  'metadata-recommendation': ['omdb', 'wikidata', 'thetvdb', 'tvmaze', 'tastedive', 'kitsu'],
   'manual-mapping': [
     'tv-time', 'metacritic', 'reelgood', 'serializd', 'allmovie', 'criticker',
     'filmaffinity', 'flickchart', 'tasteio', 'mubi', 'common-sense-media',
@@ -35,8 +35,8 @@ const FEATURE_CAPABILITIES = {
 
 describe('shipped runtime support registry', () => {
   it('classifies every selectable service exactly once', () => {
-    expect(SERVICE_DEFINITIONS).toHaveLength(35);
-    expect(new Set(SERVICE_DEFINITIONS.map((service) => service.id)).size).toBe(35);
+    expect(SERVICE_DEFINITIONS).toHaveLength(36);
+    expect(new Set(SERVICE_DEFINITIONS.map((service) => service.id)).size).toBe(36);
     expect(Object.keys(SERVICE_RUNTIME_SUPPORT).sort()).toEqual(SERVICE_DEFINITIONS.map((service) => service.id).sort());
 
     for (const [workflow, expected] of Object.entries(EXPECTED_WORKFLOWS) as Array<[RuntimeWorkflow, ServiceId[]]>) {

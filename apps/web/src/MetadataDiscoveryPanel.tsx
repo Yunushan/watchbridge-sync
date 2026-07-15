@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import type { CanonicalMediaItem, MediaKind } from '@watchbridge/core';
 
-const METADATA_PROVIDERS = ['tmdb', 'omdb', 'tvmaze', 'thetvdb', 'kitsu'] as const;
+const METADATA_PROVIDERS = ['tmdb', 'omdb', 'wikidata', 'tvmaze', 'thetvdb', 'kitsu'] as const;
 export type MetadataProvider = (typeof METADATA_PROVIDERS)[number];
 
 const MEDIA_KINDS: Record<MetadataProvider, readonly MediaKind[]> = {
   tmdb: ['movie', 'tv-show'],
   omdb: ['movie', 'tv-show', 'episode'],
+  wikidata: ['movie', 'tv-show', 'episode', 'anime', 'manga'],
   tvmaze: ['tv-show'],
   thetvdb: ['movie', 'tv-show'],
   kitsu: ['anime', 'manga', 'episode']
@@ -15,6 +16,7 @@ const MEDIA_KINDS: Record<MetadataProvider, readonly MediaKind[]> = {
 const PROVIDER_LABELS: Record<MetadataProvider, string> = {
   tmdb: 'TMDb',
   omdb: 'OMDb',
+  wikidata: 'Wikidata',
   tvmaze: 'TVmaze',
   thetvdb: 'TheTVDB',
   kitsu: 'Kitsu'
@@ -35,10 +37,11 @@ const MAX_TASTEDIVE_KEY_LENGTH = 2_000;
 const MAX_DISCOVERY_RESULTS = 100;
 const MAX_RECOMMENDATIONS = 20;
 const IMDB_ID = /^tt\d{5,15}$/;
+const WIKIDATA_ID = /^Q[1-9]\d{0,11}$/;
 const ALL_MEDIA_KINDS: readonly MediaKind[] = ['movie', 'tv-show', 'season', 'episode', 'anime', 'manga'];
 const CANONICAL_ITEM_FIELDS = new Set(['id', 'kind', 'title', 'originalTitle', 'year', 'seasonNumber', 'episodeNumber', 'externalIds']);
 const CANONICAL_EXTERNAL_ID_FIELDS = new Set([
-  'imdb', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
+  'imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
   'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby',
   'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk',
   'movielens', 'letterboxdSlug'
@@ -52,6 +55,7 @@ export interface MetadataLookupInput {
   year?: string;
   imdbId?: string;
   tvdbId?: string;
+  wikidataId?: string;
   kitsuId?: string;
   omdbApiKey?: string;
   tmdbApplicationToken?: string;
@@ -207,6 +211,12 @@ export function buildMetadataRequest(input: MetadataLookupInput): Record<string,
     const apiKey = optionalSecret(input.omdbApiKey, 'OMDb API key', 2_000);
     if (!apiKey) throw new Error('OMDb requires an API key.');
     context.apiKey = apiKey;
+  }
+
+  if (input.provider === 'wikidata') {
+    const wikidataId = trimmed(input.wikidataId);
+    if (!WIKIDATA_ID.test(wikidataId)) throw new Error('Wikidata requires an exact Q-item ID such as Q11424.');
+    externalIds.wikidata = wikidataId;
   }
 
   if (input.provider === 'tvmaze') {
@@ -369,7 +379,7 @@ export function RecommendationResultList({ recommendations }: { recommendations:
 export function MetadataDiscoveryPanel() {
   const [watchbridgeApiKey, setWatchbridgeApiKey] = useState('');
   const [metadata, setMetadata] = useState<MetadataLookupInput>({
-    provider: 'tvmaze', kind: 'tv-show', title: '', year: '', imdbId: '', tvdbId: '', kitsuId: ''
+    provider: 'tvmaze', kind: 'tv-show', title: '', year: '', imdbId: '', tvdbId: '', wikidataId: '', kitsuId: ''
   });
   const [metadataMatches, setMetadataMatches] = useState<CanonicalMediaItem[]>();
   const [metadataError, setMetadataError] = useState<string>();
@@ -462,6 +472,12 @@ export function MetadataDiscoveryPanel() {
           </label>
           <p className="support-footnote">Exact IMDb-ID metadata only. OMDb content is CC BY-NC 4.0, and OMDb limits use to personal, non-commercial purposes. WatchBridge does not call its title search or poster API.</p>
         </div>}
+        {metadata.provider === 'wikidata' && <>
+          <label>Wikidata exact Q-item ID
+            <input placeholder="Q11424" value={metadata.wikidataId} onChange={(event) => setMetadata((current) => ({ ...current, wikidataId: event.target.value }))} disabled={metadataWorking} />
+          </label>
+          <p className="support-footnote">Wikidata resolves one exact public Q-item only. It does not search, run SPARQL, edit entities, or access an account.</p>
+        </>}
         {metadata.provider === 'thetvdb' && <div className="context-grid">
           <label>TheTVDB bearer token
             <input type="password" autoComplete="off" value={metadata.tvdbAccessToken ?? ''} onChange={(event) => setMetadata((current) => ({ ...current, tvdbAccessToken: event.target.value }))} disabled={metadataWorking} />

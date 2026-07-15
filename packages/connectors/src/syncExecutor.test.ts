@@ -178,7 +178,7 @@ describe('executeSync', () => {
       { source, target, sourceContext: context, targetContext: context }
     );
     expect(result.actions).toEqual([expect.objectContaining({ feature: 'ratings', status: 'skipped', count: 0, conflicts: 1 })]);
-    expect(result.conflictDetails).toEqual([{
+    expect(result.conflictDetails).toEqual([expect.objectContaining({
       feature: 'ratings',
       direction: { source: 'trakt', target: 'simkl' },
       identity: {
@@ -190,9 +190,77 @@ describe('executeSync', () => {
       target: { state: 'rated', value: '7 on 1–10' },
       decision: 'unresolved',
       reason: 'manual-review-required'
-    }]);
+    })]);
     expect(result.conflictDetailsTruncated).toBeUndefined();
     expect(target.imported).toEqual([]);
+  });
+
+  it('applies a source choice only for the exact manual-review conflict from the preview', async () => {
+    const source = connector('trakt', { service: 'trakt', exportedAt: '2026-01-01T00:00:00Z', ratings: [rating] });
+    const target = connector('simkl', { service: 'simkl', exportedAt: '2026-01-01T00:00:00Z', ratings: [{ ...rating, sourceService: 'simkl', value: 7 }] });
+    const preview = await executeSync(
+      { source: 'trakt', target: 'simkl', selection: { ratings: true }, dryRun: true, conflictPolicy: 'manual' },
+      { source, target, sourceContext: context, targetContext: context }
+    );
+    const id = preview.conflictDetails?.[0]?.id;
+    expect(id).toMatch(/^[a-f0-9]{32}$/);
+
+    const resolved = await executeSync(
+      {
+        source: 'trakt', target: 'simkl', selection: { ratings: true }, dryRun: true, conflictPolicy: 'manual',
+        conflictResolutions: [{ id: id!, decision: 'source' }]
+      },
+      { source, target, sourceContext: context, targetContext: context }
+    );
+
+    expect(resolved.actions).toEqual([expect.objectContaining({ status: 'previewed', count: 1, conflicts: 1 })]);
+    expect(resolved.conflictDetails).toEqual([expect.objectContaining({ id, decision: 'source', reason: 'manual-source-selected' })]);
+    expect(target.imported).toEqual([{ dryRun: true, count: 1 }]);
+  });
+
+  it('rejects a stale or non-manual per-record choice before preflight writes', async () => {
+    const source = connector('trakt', { service: 'trakt', exportedAt: '2026-01-01T00:00:00Z', ratings: [rating] });
+    const target = connector('simkl', { service: 'simkl', exportedAt: '2026-01-01T00:00:00Z', ratings: [{ ...rating, sourceService: 'simkl', value: 7 }] });
+    await expect(executeSync(
+      {
+        source: 'trakt', target: 'simkl', selection: { ratings: true }, dryRun: true, conflictPolicy: 'manual',
+        conflictResolutions: [{ id: '0123456789abcdef0123456789abcdef', decision: 'source' }]
+      },
+      { source, target, sourceContext: context, targetContext: context }
+    )).rejects.toThrow('no longer matches');
+    expect(target.imported).toEqual([]);
+  });
+
+  it('uses an explicit exact identity override only for the requested same-kind media pair', async () => {
+    const sourceRating: CanonicalRating = {
+      ...rating,
+      item: { id: 'movie:source-record', kind: 'movie', title: 'Ambiguous title', externalIds: {} }
+    };
+    const targetRating: CanonicalRating = {
+      ...rating,
+      sourceService: 'simkl', value: 7,
+      item: { id: 'movie:target-record', kind: 'movie', title: 'Different local title', externalIds: {} }
+    };
+    const source = connector('trakt', { service: 'trakt', exportedAt: '2026-01-01T00:00:00Z', ratings: [sourceRating] });
+    const target = connector('simkl', { service: 'simkl', exportedAt: '2026-01-01T00:00:00Z', ratings: [targetRating] });
+
+    const result = await executeSync(
+      {
+        source: 'trakt', target: 'simkl', selection: { ratings: true }, dryRun: true, conflictPolicy: 'source-wins',
+        identityOverrides: [{ feature: 'ratings', sourceItemId: 'movie:source-record', targetItemId: 'movie:target-record' }]
+      },
+      { source, target, sourceContext: context, targetContext: context }
+    );
+
+    expect(result.actions).toEqual([expect.objectContaining({ status: 'previewed', count: 1, conflicts: 1 })]);
+    expect(target.imported).toEqual([{ dryRun: true, count: 1 }]);
+    await expect(executeSync(
+      {
+        source: 'trakt', target: 'simkl', selection: { ratings: true }, dryRun: true,
+        identityOverrides: [{ feature: 'ratings', sourceItemId: ' movie:source-record', targetItemId: 'movie:target-record' }]
+      },
+      { source, target, sourceContext: context, targetContext: context }
+    )).rejects.toThrow('identity override');
   });
 
   it('bounds conflict evidence globally and omits raw reviews and connector credentials', async () => {

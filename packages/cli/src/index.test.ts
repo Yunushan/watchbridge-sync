@@ -28,7 +28,7 @@ describe('WatchBridge CLI', () => {
     const io = makeIo({});
     await run(['services'], io);
     const services = JSON.parse(io.lines[0]);
-    expect(services).toHaveLength(35);
+    expect(services).toHaveLength(36);
     expect(services).toContainEqual(expect.objectContaining({ id: 'omdb', readiness: 'metadata-only' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'trakt', readiness: 'implemented' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'bangumi', readiness: 'implemented' }));
@@ -44,13 +44,13 @@ describe('WatchBridge CLI', () => {
     await run(['support-summary'], io);
     expect(JSON.parse(io.lines[0])).toMatchObject({
       platforms: {
-        selectable: { supported: 35, total: 35, percent: 100, missingPercent: 0 },
-        directAccount: { supported: 11, percent: 31.4, missingPercent: 68.6 },
-        fullThreeFeatureDirect: { supported: 6, percent: 17.1 },
-        allModelFeaturesDirect: { supported: 1, percent: 2.9, missingPercent: 97.1, services: ['trakt'] }
+        selectable: { supported: 36, total: 36, percent: 100, missingPercent: 0 },
+        directAccount: { supported: 11, percent: 30.6, missingPercent: 69.4 },
+        fullThreeFeatureDirect: { supported: 6, percent: 16.7 },
+        allModelFeaturesDirect: { supported: 1, percent: 2.8, missingPercent: 97.2, services: ['trakt'] }
       },
       featureFamilies: { executable: { supported: 6, total: 6, percent: 100, missingPercent: 0 } },
-      featureSlots: { automatedTarget: { supported: 33, total: 210, percent: 15.7, missingPercent: 84.3 } },
+      featureSlots: { automatedTarget: { supported: 33, total: 216, percent: 15.3, missingPercent: 84.7 } },
       directions: { executable: { supported: 2, total: 2, percent: 100, missingPercent: 0 } }
     });
   });

@@ -6,6 +6,20 @@ Register your own provider application before using these flows. Put request fil
 
 All CLI commands default to `http://localhost:8080`. Add a different WatchBridge API base URL as the final argument when needed. This selects the WatchBridge server, not a provider endpoint. Request-supplied provider `baseUrl`, `v3BaseUrl`, and `v4BaseUrl` overrides are rejected by default; see [Deployment](DEPLOYMENT.md) for the tightly constrained, high-risk owner opt-in. If the WatchBridge server uses `WATCHBRIDGE_API_KEY`, set the same environment variable for the CLI; it is sent as the server authorization header and is not read from a request file.
 
+## Same-origin browser callback relay
+
+For browser authorization flows, a deployed WatchBridge web app can use a registered redirect such as `https://watchbridge.example/oauth/callback`. The static host must serve the web app for that route (SPA history fallback) over the same origin as the tab where authorization began. The callback page accepts one bounded `state` plus either `code` or provider error, relays it only through a same-origin browser `BroadcastChannel` to the already-open authorization panel, and immediately removes callback parameters from its own URL. The original tab compares the returned state with its in-memory start transaction before filling the exchange fields; it never automatically exchanges a code or persists callback data.
+
+This works without `window.opener`, cookies, local storage, or a token vault. Keep the manual state/code fields available as the fallback for browsers without `BroadcastChannel`, callbacks hosted on another origin, and Annict's OOB flow. Configure the web host, analytics, and reverse proxy to omit or redact callback query parameters from logs; authorization codes remain sensitive until exchanged.
+
+For a multi-instance API, set `WATCHBRIDGE_OAUTH_TRANSACTION_DIR` to a protected shared filesystem directory and configure `WATCHBRIDGE_STORAGE_KEY`. This encrypts the short-lived state/PKCE transaction and atomically allows only one instance to consume it. It does not persist the resulting provider token or make account-sync jobs/backups horizontally scalable; see [Deployment](DEPLOYMENT.md).
+
+## Encrypted connector vault
+
+For a protected single-tenant deployment, the web **Encrypted connector vault** panel can store a complete validated direct-account connector context. It requires an explicit checkbox, `WATCHBRIDGE_STORAGE_KEY`, and optionally `WATCHBRIDGE_OAUTH_VAULT_DIR` (otherwise `.watchbridge-oauth-vault`). The API returns only an opaque UUID, never the context. Use exactly `{ "vaultId": "UUID" }` as the source or target context for an account sync; the vault record must belong to that same service and is decrypted only server-side for that request. Delete a record with `DELETE /v1/oauth/vault/:id`.
+
+The vault is encrypted at rest but is not a multi-user or delegated secret manager: access follows the same WatchBridge API authorization boundary, records have no automatic retention policy, and account-sync jobs/backups still need separate shared transactional storage before a horizontally scaled deployment.
+
 The web **Account authorization** panel exposes all six helper families. It keeps codes, client secrets, access tokens, and refresh tokens only in component memory, never writes them to browser storage, and clears sensitive fields on request. Shikimori start/exchange/refresh and Annict browser-or-OOB start/exchange/revoke are available there as well as through the API routes and CLI commands documented below.
 
 ## TMDb v4 authorization and v3 write session

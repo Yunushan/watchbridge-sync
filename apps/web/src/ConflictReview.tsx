@@ -7,13 +7,15 @@ const FEATURES = new Set(['ratings', 'watched', 'watchlist', 'reviews', 'followi
 const MEDIA_KINDS = new Set<MediaKind>(['movie', 'tv-show', 'season', 'episode', 'anime', 'manga']);
 const SERVICE_IDS = new Set<ServiceId>(SERVICE_DEFINITIONS.map((service) => service.id));
 const ID_PROVIDERS = new Set([
-  'imdb', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
+  'imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
   'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby',
   'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk',
   'movielens', 'letterboxdSlug'
 ]);
 const REASON_DECISIONS = new Map([
   ['manual-review-required', 'unresolved'],
+  ['manual-source-selected', 'source'],
+  ['manual-target-selected', 'target'],
   ['source-wins-policy', 'source'],
   ['target-wins-policy', 'target'],
   ['newest-source', 'source'],
@@ -27,6 +29,8 @@ export type ConflictFeature = 'ratings' | 'watched' | 'watchlist' | 'reviews' | 
 export type ConflictDecision = 'source' | 'target' | 'unchanged' | 'unresolved';
 export type ConflictReason =
   | 'manual-review-required'
+  | 'manual-source-selected'
+  | 'manual-target-selected'
   | 'source-wins-policy'
   | 'target-wins-policy'
   | 'newest-source'
@@ -56,6 +60,7 @@ export interface ConflictSideSummary {
 }
 
 export interface ConflictDetail {
+  id: string;
   feature: ConflictFeature;
   direction: { source: ServiceId; target: ServiceId };
   identity: ConflictIdentity;
@@ -148,13 +153,15 @@ function parseSide(value: unknown, label: string): ConflictSideSummary {
 }
 
 function parseDetail(value: unknown): ConflictDetail {
-  if (!object(value) || !hasOnlyKeys(value, ['feature', 'direction', 'identity', 'source', 'target', 'decision', 'reason'])
+  if (!object(value) || !hasOnlyKeys(value, ['id', 'feature', 'direction', 'identity', 'source', 'target', 'decision', 'reason'])
+    || typeof value.id !== 'string' || !/^[a-f0-9]{32}$/.test(value.id)
     || typeof value.feature !== 'string' || !FEATURES.has(value.feature)
     || typeof value.decision !== 'string' || typeof value.reason !== 'string'
     || REASON_DECISIONS.get(value.reason as ConflictReason) !== value.decision) {
     throw new Error('The API returned an invalid conflict detail.');
   }
   return {
+    id: value.id,
     feature: value.feature as ConflictFeature,
     direction: parseDirection(value.direction),
     identity: parseIdentity(value.identity),
@@ -182,6 +189,8 @@ export function parseConflictReview(detailsValue: unknown, truncatedValue: unkno
 
 const reasonLabels: Record<ConflictReason, string> = {
   'manual-review-required': 'Unresolved: manual review is required; neither side was written for this match.',
+  'manual-source-selected': 'Source selected for this individual manual-review match.',
+  'manual-target-selected': 'Target selected for this individual manual-review match.',
   'source-wins-policy': 'Source selected by the source-wins policy.',
   'target-wins-policy': 'Target selected by the target-wins policy.',
   'newest-source': 'Source selected by the newest-wins comparison.',
@@ -200,7 +209,15 @@ function ConflictSide({ label, side }: { label: string; side: ConflictSideSummar
   return <div><dt>{label}</dt><dd>{side.state}{side.value ? ` — ${side.value}` : ''}{side.timestamp ? <> at <time dateTime={side.timestamp}>{side.timestamp}</time></> : ''}</dd></div>;
 }
 
-export function ConflictReview({ review }: { review: ConflictReviewValue }) {
+export function ConflictReview({
+  review,
+  resolutions,
+  onResolve
+}: {
+  review: ConflictReviewValue;
+  resolutions?: Readonly<Record<string, 'source' | 'target'>>;
+  onResolve?: (id: string, decision: 'source' | 'target' | undefined) => void;
+}) {
   if (review.details.length === 0) return null;
   const unresolved = review.details.filter((detail) => detail.decision === 'unresolved').length;
   return <section className="conflict-review" aria-label="Conflict review">
@@ -217,6 +234,16 @@ export function ConflictReview({ review }: { review: ConflictReviewValue }) {
           {detail.identity.kind === 'profile' && <div><dt>Provider-scoped username</dt><dd>{detail.identity.service}:{detail.identity.username}</dd></div>}
           <div><dt>Decision</dt><dd>{reasonLabels[detail.reason]}</dd></div>
         </dl>
+        {detail.decision === 'unresolved' && onResolve && <label>Resolve this matched record
+          <select value={resolutions?.[detail.id] ?? ''} onChange={(event) => {
+            const decision = event.target.value;
+            onResolve(detail.id, decision === 'source' || decision === 'target' ? decision : undefined);
+          }}>
+            <option value="">Leave unresolved</option>
+            <option value="source">Use source state</option>
+            <option value="target">Use target state</option>
+          </select>
+        </label>}
       </li>)}
     </ol>
   </section>;

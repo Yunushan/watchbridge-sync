@@ -88,6 +88,13 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     integrationMode: 'metadata-only',
     notes: 'Exact IMDb-ID metadata lookup with a caller-provided OMDb API key. No title search, poster API, account, or user-data path is shipped. OMDb content is CC BY-NC 4.0 and its terms limit use to personal, non-commercial purposes.'
   },
+  wikidata: {
+    ...NONE,
+    readMetadata: true,
+    apiAuth: 'none',
+    integrationMode: 'metadata-only',
+    notes: 'Public exact Wikidata Q-item metadata lookup. It reads one fixed entity-data document with an identifying User-Agent; no search, SPARQL, edits, account, or user-data path is shipped.'
+  },
   'tv-time': {
     ...NONE,
     apiAuth: 'unknown',

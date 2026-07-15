@@ -29,8 +29,8 @@ describe('App', () => {
     expect(html).toContain('Preview backup restore');
     expect(html).toContain('Load job history');
     expect(html).toContain('Support percentages');
-    expect(html).toContain('35 / 35 platforms');
-    expect(html).toContain('31.4%');
+    expect(html).toContain('36 / 36 platforms');
+    expect(html).toContain('30.6%');
     expect(html).toContain('Account to account sync');
     expect(html).toContain('Preview account sync');
     expect(html).toContain('Source connector context JSON');

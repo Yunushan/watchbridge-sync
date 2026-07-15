@@ -70,6 +70,7 @@ export const SERVICE_RUNTIME_SUPPORT = {
     metadata: true
   }),
   omdb: support('metadata-recommendation', { metadata: true }),
+  wikidata: support('metadata-recommendation', { metadata: true }),
   'tv-time': support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   trakt: support('direct-account', {
     accountReadFeatures: ['ratings', 'watched', 'watchlist', 'reviews', 'following', 'followers'],

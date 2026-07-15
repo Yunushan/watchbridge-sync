@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { canConvertRatingBetweenServices, convertBetweenServices, getCapabilities, getRuntimeSupportSummary, isPlexRatingKey, isPlexServerId, plexGuidMatchesMediaKind, plexGuidMediaType, SERVICE_BY_ID, SERVICE_DEFINITIONS, planSync, type CanonicalMediaItem, type ConflictPolicy, type ExternalIds, type MediaKind, type ServiceId, type SyncSelection } from '@watchbridge/core';
+import { canConvertRatingBetweenServices, convertBetweenServices, getCapabilities, getRuntimeSupportSummary, isPlexRatingKey, isPlexServerId, plexGuidMatchesMediaKind, plexGuidMediaType, SERVICE_BY_ID, SERVICE_DEFINITIONS, planSync, type CanonicalMediaItem, type ConflictPolicy, type ExternalIds, type MediaKind, type ServiceId, type SyncConflictResolution, type SyncIdentityOverride, type SyncSelection } from '@watchbridge/core';
 import { BackupRestoreError, createBackupArchive, createMetadataConnector, createOfficialConnector, executeSync, generateLetterboxdImportFiles, importProviderFiles, MAX_SYNC_CONFLICT_DETAILS, parseBackupArchive, parseMappedCsv, parseMappedCsvImportConfig, restoreBackup, SyncExecutionError, type ConnectorBackup, type ConnectorContext, type WatchBridgeConnector } from '@watchbridge/connectors';
 import {
   createTmdbV3Session,
@@ -146,6 +146,45 @@ function conflictPolicy(value: unknown): ConflictPolicy | undefined {
   return typeof value === 'string' && ['source-wins', 'target-wins', 'newest-wins', 'manual'].includes(value)
     ? value as ConflictPolicy
     : undefined;
+}
+
+function syncConflictResolutions(value: unknown): SyncConflictResolution[] | undefined {
+  if (!Array.isArray(value) || value.length > MAX_SYNC_CONFLICT_DETAILS) return undefined;
+  const ids = new Set<string>();
+  const resolutions: SyncConflictResolution[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+    const record = candidate as Record<string, unknown>;
+    if (!containsOnlyKeys(record, ['id', 'decision']) || typeof record.id !== 'string'
+      || !/^[a-f0-9]{32}$/.test(record.id) || (record.decision !== 'source' && record.decision !== 'target')
+      || ids.has(record.id)) return undefined;
+    ids.add(record.id);
+    resolutions.push({ id: record.id, decision: record.decision });
+  }
+  return resolutions;
+}
+
+function syncIdentityOverrides(value: unknown, selection: SyncSelection): SyncIdentityOverride[] | undefined {
+  if (!Array.isArray(value) || value.length > MAX_SYNC_CONFLICT_DETAILS) return undefined;
+  const ids = new Set<string>();
+  const overrides: SyncIdentityOverride[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+    const record = candidate as Record<string, unknown>;
+    const feature = record.feature;
+    const sourceItemId = record.sourceItemId;
+    const targetItemId = record.targetItemId;
+    if (!containsOnlyKeys(record, ['feature', 'sourceItemId', 'targetItemId'])
+      || typeof feature !== 'string' || !syncFeatures.includes(feature as typeof syncFeatures[number]) || !selection[feature as keyof SyncSelection]
+      || typeof sourceItemId !== 'string' || typeof targetItemId !== 'string'
+      || !sourceItemId.trim() || !targetItemId.trim() || sourceItemId !== sourceItemId.trim() || targetItemId !== targetItemId.trim()
+      || sourceItemId.length > 2_000 || targetItemId.length > 2_000 || /[\u0000-\u001f\u007f]/.test(sourceItemId) || /[\u0000-\u001f\u007f]/.test(targetItemId)) return undefined;
+    const id = `${feature}\u0000${sourceItemId}\u0000${targetItemId}`;
+    if (ids.has(id)) return undefined;
+    ids.add(id);
+    overrides.push({ feature: feature as keyof SyncSelection, sourceItemId, targetItemId });
+  }
+  return overrides;
 }
 
 app.post('/v1/oauth/tmdb/start', async (c) => {
@@ -610,7 +649,7 @@ function connectorContext(value: unknown): ConnectorContext | undefined {
 
 const mediaKinds: readonly MediaKind[] = ['movie', 'tv-show', 'season', 'episode', 'anime', 'manga'];
 const mediaItemKeys = new Set(['id', 'kind', 'title', 'originalTitle', 'year', 'seasonNumber', 'episodeNumber', 'externalIds']);
-const externalIdKeys = new Set(['imdb', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk', 'movielens', 'letterboxdSlug']);
+const externalIdKeys = new Set(['imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk', 'movielens', 'letterboxdSlug']);
 
 function canonicalMediaItem(value: unknown): CanonicalMediaItem | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -636,7 +675,7 @@ function canonicalMediaItem(value: unknown): CanonicalMediaItem | undefined {
     if (typeof candidate !== 'number' || !Number.isSafeInteger(candidate) || candidate <= 0) return undefined;
     externalIds[key] = candidate;
   }
-  for (const key of ['imdb', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'douban', 'kinopoisk', 'letterboxdSlug'] as const) {
+  for (const key of ['imdb', 'wikidata', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'douban', 'kinopoisk', 'letterboxdSlug'] as const) {
     const candidate = externalIdsInput[key];
     if (candidate === undefined) continue;
     if (!requiredString(candidate) || candidate.length > 500) return undefined;
@@ -652,6 +691,7 @@ function canonicalMediaItem(value: unknown): CanonicalMediaItem | undefined {
     }
     externalIds[key] = candidate;
   }
+  if (externalIds.wikidata !== undefined && !/^Q[1-9]\d{0,11}$/.test(externalIds.wikidata)) return undefined;
   if (externalIds.annictWork !== undefined && item.kind !== 'anime' && item.kind !== 'episode') return undefined;
   if (externalIds.kitsu !== undefined && item.kind !== 'anime' && item.kind !== 'manga' && item.kind !== 'episode') return undefined;
   if (externalIds.shikimori !== undefined && item.kind !== 'anime') return undefined;
@@ -700,6 +740,65 @@ function backupDirectory(): string {
 
 function jobDirectory(): string {
   return process.env.WATCHBRIDGE_JOB_DIR ?? join(process.cwd(), '.watchbridge-jobs');
+}
+
+function oauthVaultDirectory(): string {
+  return process.env.WATCHBRIDGE_OAUTH_VAULT_DIR ?? join(process.cwd(), '.watchbridge-oauth-vault');
+}
+
+interface OAuthVaultRecord {
+  schema: 'watchbridge.oauth-vault.v1';
+  id: string;
+  service: ServiceId;
+  createdAt: string;
+  context: ConnectorContext;
+}
+
+function parseOAuthVaultRecord(value: unknown, expectedId: string): OAuthVaultRecord | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (!containsOnlyKeys(record, ['schema', 'id', 'service', 'createdAt', 'context'])
+    || record.schema !== 'watchbridge.oauth-vault.v1' || record.id !== expectedId || !isBackupId(expectedId)
+    || !validStoredJobTimestamp(record.createdAt)) return undefined;
+  const service = serviceId(record.service);
+  const context = connectorContext(record.context);
+  return service && context ? { schema: 'watchbridge.oauth-vault.v1', id: expectedId, service, createdAt: record.createdAt, context } : undefined;
+}
+
+async function writeOAuthVaultRecord(record: OAuthVaultRecord): Promise<void> {
+  const plaintext = JSON.stringify(record);
+  const encrypted = encodeStoredJson(plaintext, 'oauth-vault', record.id);
+  if (encrypted === plaintext) throw new Error('Encrypted OAuth vault storage requires WATCHBRIDGE_STORAGE_KEY.');
+  await writeStorageFileAtomically(join(oauthVaultDirectory(), `${record.id}.json`), record.id, encrypted);
+}
+
+async function readOAuthVaultRecord(id: string): Promise<OAuthVaultRecord | undefined> {
+  if (!isBackupId(id)) return undefined;
+  try {
+    const stored = await readFile(join(oauthVaultDirectory(), `${id}.json`), 'utf8');
+    const decoded = decodeStoredJson(stored, 'oauth-vault', id);
+    if (decoded.migrationRequired) return undefined;
+    return parseOAuthVaultRecord(JSON.parse(decoded.plaintext), id);
+  } catch {
+    return undefined;
+  }
+}
+
+function vaultReference(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  return containsOnlyKeys(record, ['vaultId']) && typeof record.vaultId === 'string' && isBackupId(record.vaultId)
+    ? record.vaultId
+    : undefined;
+}
+
+async function resolvedConnectorContext(value: unknown, expectedService?: ServiceId): Promise<ConnectorContext | undefined> {
+  const direct = connectorContext(value);
+  if (direct) return direct;
+  const id = vaultReference(value);
+  if (!id) return undefined;
+  const record = await readOAuthVaultRecord(id);
+  return record && (expectedService === undefined || record.service === expectedService) ? record.context : undefined;
 }
 
 const STORAGE_RETENTION_MAX_DAYS = 36_500;
@@ -773,6 +872,24 @@ async function removeEligibleStorageFile(path: string, dryRun: boolean): Promise
   }
 }
 
+async function removeEligibleSyncJob(id: string, cutoff: number, dryRun: boolean): Promise<'eligible' | 'deleted' | 'retained' | 'error'> {
+  if (dryRun) return 'eligible';
+  try {
+    return await withJobLock(id, async () => {
+      const current = await readSyncJob(id);
+      if (!current || current.status === 'pending' || Date.parse(current.updatedAt) >= cutoff) return 'retained';
+      try {
+        await unlink(join(jobDirectory(), `${id}.json`));
+        return 'deleted';
+      } catch {
+        return 'error';
+      }
+    });
+  } catch {
+    return 'error';
+  }
+}
+
 async function writeStorageFileAtomically(finalPath: string, id: string, contents: string): Promise<void> {
   const directory = dirname(finalPath);
   await mkdir(directory, { recursive: true });
@@ -787,6 +904,52 @@ async function writeStorageFileAtomically(finalPath: string, id: string, content
       // The file can already be absent when creation failed or rename succeeded.
     }
     throw error;
+  }
+}
+
+const JOB_LOCK_WAIT_MS = 5_000;
+const JOB_LOCK_RETRY_MS = 50;
+const JOB_LOCK_STALE_MS = 30_000;
+
+function jobLockPath(id: string): string {
+  return join(jobDirectory(), `.${id}.lock`);
+}
+
+function pause(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+export async function withJobLock<T>(id: string, action: () => Promise<T>): Promise<T> {
+  const path = jobLockPath(id);
+  const owner = randomUUID();
+  const deadline = Date.now() + JOB_LOCK_WAIT_MS;
+  await mkdir(jobDirectory(), { recursive: true });
+  while (true) {
+    try {
+      await writeFile(path, owner, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      break;
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+      if (code !== 'EEXIST') throw error;
+      try {
+        const metadata = await stat(path);
+        if (Date.now() - metadata.mtimeMs > JOB_LOCK_STALE_MS) await unlink(path);
+      } catch {
+        // Another owner may have released/reclaimed the lock; retry below.
+      }
+      if (Date.now() >= deadline) throw new Error('Timed out waiting for the shared sync-job lock.');
+      await pause(JOB_LOCK_RETRY_MS);
+    }
+  }
+  try {
+    return await action();
+  } finally {
+    try {
+      if (await readFile(path, 'utf8') === owner) await unlink(path);
+    } catch {
+      // A stale-lock recovery or an unavailable shared filesystem must not
+      // hide the completed operation result.
+    }
   }
 }
 
@@ -816,7 +979,7 @@ interface SyncJobRecord {
 const conflictFeatures = new Set(syncFeatures);
 const conflictIdentityKinds = new Set(['movie', 'tv-show', 'season', 'episode', 'anime', 'manga', 'profile']);
 const conflictIdProviders = new Set([
-  'imdb', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
+  'imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
   'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby',
   'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk',
   'movielens', 'letterboxdSlug'
@@ -824,6 +987,8 @@ const conflictIdProviders = new Set([
 const conflictDecisions = new Set(['source', 'target', 'unchanged', 'unresolved']);
 const conflictReasons = new Map([
   ['manual-review-required', 'unresolved'],
+  ['manual-source-selected', 'source'],
+  ['manual-target-selected', 'target'],
   ['source-wins-policy', 'source'],
   ['target-wins-policy', 'target'],
   ['newest-source', 'source'],
@@ -877,7 +1042,8 @@ function validStoredConflictSide(value: unknown): boolean {
 function validStoredConflictDetail(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const detail = value as Record<string, unknown>;
-  if (!containsOnlyKeys(detail, ['feature', 'direction', 'identity', 'source', 'target', 'decision', 'reason'])) return false;
+  if (!containsOnlyKeys(detail, ['id', 'feature', 'direction', 'identity', 'source', 'target', 'decision', 'reason'])
+    || typeof detail.id !== 'string' || !/^[a-f0-9]{32}$/.test(detail.id)) return false;
   if (typeof detail.feature !== 'string' || !conflictFeatures.has(detail.feature as typeof syncFeatures[number])) return false;
   if (!storedDirection(detail.direction) || !validStoredConflictIdentity(detail.identity)
     || !validStoredConflictSide(detail.source) || !validStoredConflictSide(detail.target)) return false;
@@ -1017,9 +1183,17 @@ async function createSyncJob(
 }
 
 async function updateSyncJob(job: SyncJobRecord, patch: Partial<Omit<SyncJobRecord, 'id' | 'createdAt'>>): Promise<SyncJobRecord> {
-  const record: SyncJobRecord = { ...job, ...patch, updatedAt: new Date().toISOString() };
-  await writeSyncJob(record);
-  return record;
+  return withJobLock(job.id, async () => {
+    const current = await readSyncJob(job.id);
+    if (!current) throw new Error('The shared sync job is unavailable.');
+    // A second worker can observe a retry, reverse-proxy replay, or a late
+    // completion callback. Once a durable terminal record exists, retain it
+    // rather than overwriting its recovery evidence with stale local state.
+    if (current.status !== 'pending') return current;
+    const record: SyncJobRecord = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    await writeSyncJob(record);
+    return record;
+  });
 }
 
 async function completeSyncJob(
@@ -1158,8 +1332,13 @@ async function cleanupStorage(dryRun: boolean, now = Date.now()): Promise<Storag
     }
     if (jobCutoff !== undefined && Date.parse(record.updatedAt) < jobCutoff) {
       summary.jobs.eligible += 1;
-      const result = await removeEligibleStorageFile(join(jobDirectory(), `${id}.json`), dryRun);
+      const result = await removeEligibleSyncJob(id, jobCutoff, dryRun);
       if (result === 'deleted') summary.jobs.deleted += 1;
+      if (result === 'retained') {
+        const refreshed = await readSyncJob(id);
+        if (refreshed) retainedJobs.push(refreshed);
+        else summary.errors += 1;
+      }
       if (result === 'error') {
         summary.errors += 1;
         retainedJobs.push(record);
@@ -1356,9 +1535,44 @@ app.post('/v1/storage/cleanup', async (c) => {
   }
 });
 
+app.post('/v1/oauth/vault', async (c) => {
+  const body = await c.req.json<Record<string, unknown>>();
+  if (!containsOnlyKeys(body, ['service', 'context', 'confirmStore'])) {
+    return c.json({ error: 'OAuth vault request contains an unknown field.' }, 400);
+  }
+  const service = serviceId(body.service);
+  const context = connectorContext(body.context);
+  if (!service || !context || body.confirmStore !== true) {
+    return c.json({ error: 'A supported service, valid connector context, and confirmStore: true are required.' }, 400);
+  }
+  const timestamp = new Date().toISOString();
+  const record: OAuthVaultRecord = {
+    schema: 'watchbridge.oauth-vault.v1', id: randomUUID(), service, createdAt: timestamp, context
+  };
+  try {
+    await writeOAuthVaultRecord(record);
+    return c.json({ id: record.id, service: record.service, createdAt: record.createdAt }, 201);
+  } catch {
+    return c.json({ error: 'Encrypted OAuth vault storage is unavailable. Configure WATCHBRIDGE_STORAGE_KEY and a protected vault directory.' }, 503);
+  }
+});
+
+app.delete('/v1/oauth/vault/:id', async (c) => {
+  const id = c.req.param('id');
+  if (!isBackupId(id)) return c.json({ error: 'Unknown OAuth vault record.' }, 404);
+  try {
+    const record = await readOAuthVaultRecord(id);
+    if (!record) return c.json({ error: 'Unknown OAuth vault record.' }, 404);
+    await unlink(join(oauthVaultDirectory(), `${id}.json`));
+    return c.json({ id, deleted: true });
+  } catch {
+    return c.json({ error: 'OAuth vault deletion failed.' }, 500);
+  }
+});
+
 app.post('/v1/sync/execute', async (c) => {
   const body = await c.req.json<Record<string, unknown>>();
-  if (!containsOnlyKeys(body, ['source', 'target', 'selection', 'dryRun', 'confirmWrite', 'direction', 'conflictPolicy', 'sourceContext', 'targetContext'])) {
+  if (!containsOnlyKeys(body, ['source', 'target', 'selection', 'dryRun', 'confirmWrite', 'direction', 'conflictPolicy', 'conflictResolutions', 'identityOverrides', 'sourceContext', 'targetContext'])) {
     return c.json({ error: 'Sync execution request contains an unknown field.' }, 400);
   }
   const source = serviceId(body.source);
@@ -1379,11 +1593,15 @@ app.post('/v1/sync/execute', async (c) => {
   if (!sourceConnector || !targetConnector) {
     return c.json({ error: 'Direct execution is only available for implemented official API connectors. Use a file workflow for this service.' }, 422);
   }
-  const sourceContext = connectorContext(body.sourceContext);
-  const targetContext = connectorContext(body.targetContext);
+  const sourceContext = await resolvedConnectorContext(body.sourceContext, source);
+  const targetContext = await resolvedConnectorContext(body.targetContext, target);
   if (!sourceContext || !targetContext) return c.json({ error: 'Both sourceContext and targetContext are required.' }, 400);
   const selectedConflictPolicy = body.conflictPolicy === undefined ? undefined : conflictPolicy(body.conflictPolicy);
   if (body.conflictPolicy !== undefined && !selectedConflictPolicy) return c.json({ error: 'Unknown conflictPolicy.' }, 400);
+  const selectedConflictResolutions = body.conflictResolutions === undefined ? undefined : syncConflictResolutions(body.conflictResolutions);
+  if (body.conflictResolutions !== undefined && !selectedConflictResolutions) return c.json({ error: `conflictResolutions must contain at most ${MAX_SYNC_CONFLICT_DETAILS} unique preview identifiers with source or target decisions.` }, 400);
+  const selectedIdentityOverrides = body.identityOverrides === undefined ? undefined : syncIdentityOverrides(body.identityOverrides, selection);
+  if (body.identityOverrides !== undefined && !selectedIdentityOverrides) return c.json({ error: `identityOverrides must contain at most ${MAX_SYNC_CONFLICT_DETAILS} unique, selected-feature source-to-target canonical item pairs.` }, 400);
 
   let pendingJob: SyncJobRecord;
   try {
@@ -1406,7 +1624,9 @@ app.post('/v1/sync/execute', async (c) => {
       dryRun: body.dryRun !== false,
       confirmWrite: body.confirmWrite === true,
       direction: selectedDirection,
-      conflictPolicy: selectedConflictPolicy
+      conflictPolicy: selectedConflictPolicy,
+      ...(selectedConflictResolutions ? { conflictResolutions: selectedConflictResolutions } : {}),
+      ...(selectedIdentityOverrides ? { identityOverrides: selectedIdentityOverrides } : {})
     }, {
       source: sourceConnector,
       target: targetConnector,
@@ -1438,7 +1658,7 @@ app.post('/v1/sync/execute', async (c) => {
 
 app.post('/v1/sync/from-backup', async (c) => {
   const body = await c.req.json<Record<string, unknown>>();
-  if (!containsOnlyKeys(body, ['backup', 'target', 'selection', 'dryRun', 'confirmWrite', 'direction', 'conflictPolicy', 'targetContext'])) {
+  if (!containsOnlyKeys(body, ['backup', 'target', 'selection', 'dryRun', 'confirmWrite', 'direction', 'conflictPolicy', 'identityOverrides', 'targetContext'])) {
     return c.json({ error: 'Backup sync request contains an unknown field.' }, 400);
   }
   let backup: ReturnType<typeof parseBackupArchive>;
@@ -1458,6 +1678,8 @@ app.post('/v1/sync/from-backup', async (c) => {
   }
   const selectedConflictPolicy = body.conflictPolicy === undefined ? undefined : conflictPolicy(body.conflictPolicy);
   if (body.conflictPolicy !== undefined && !selectedConflictPolicy) return c.json({ error: 'Unknown conflictPolicy.' }, 400);
+  const selectedIdentityOverrides = body.identityOverrides === undefined ? undefined : syncIdentityOverrides(body.identityOverrides, selection);
+  if (body.identityOverrides !== undefined && !selectedIdentityOverrides) return c.json({ error: `identityOverrides must contain at most ${MAX_SYNC_CONFLICT_DETAILS} unique, selected-feature source-to-target canonical item pairs.` }, 400);
   const targetConnector = createOfficialConnector(target);
   if (!targetConnector) return c.json({ error: 'Backup sync targets must have an implemented official account connector.' }, 422);
   const targetContext = connectorContext(body.targetContext);
@@ -1486,7 +1708,8 @@ app.post('/v1/sync/from-backup', async (c) => {
       selection,
       dryRun: body.dryRun !== false,
       confirmWrite: body.confirmWrite === true,
-      conflictPolicy: selectedConflictPolicy
+      conflictPolicy: selectedConflictPolicy,
+      ...(selectedIdentityOverrides ? { identityOverrides: selectedIdentityOverrides } : {})
     }, {
       source: sourceConnector,
       target: targetConnector,

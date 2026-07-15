@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { getServiceDefinition, SERVICE_DEFINITIONS, type ConflictPolicy, type ServiceId } from '@watchbridge/core';
 import { BackupDownloadButton } from './BackupDownloadButton.js';
-import { ConflictReview, parseConflictReview } from './ConflictReview.js';
+import { ConflictReview, parseConflictReview, type ConflictDetail } from './ConflictReview.js';
 
 export const MAX_ACCOUNT_SYNC_BYTES = 10 * 1024 * 1024;
 
@@ -110,6 +110,8 @@ export interface AccountSyncFormValues {
   confirmWrite: boolean;
   sourceContextText: string;
   targetContextText: string;
+  conflictResolutions?: Array<{ id: string; decision: 'source' | 'target' }>;
+  identityOverridesText?: string;
 }
 
 export class AccountSyncRequestError extends Error {
@@ -154,6 +156,39 @@ export function parseAccountConnectorContext(text: string, label: string): Recor
   return value;
 }
 
+export function parseIdentityOverrides(text: string, selection: FeatureSelection): Array<{ feature: keyof FeatureSelection; sourceItemId: string; targetItemId: string }> | undefined {
+  if (!text.trim()) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error('Identity overrides must be valid JSON.');
+  }
+  if (!Array.isArray(value) || value.length > 100) throw new Error('Identity overrides must contain at most 100 explicit item pairs.');
+  const unique = new Set<string>();
+  return value.map((candidate) => {
+    if (!object(candidate) || Object.keys(candidate).some((key) => !['feature', 'sourceItemId', 'targetItemId'].includes(key))
+      || !['ratings', 'watched', 'watchlist', 'reviews', 'following', 'followers'].includes(String(candidate.feature))
+      || selection[candidate.feature as keyof FeatureSelection] !== true
+      || typeof candidate.sourceItemId !== 'string' || typeof candidate.targetItemId !== 'string'
+      || !candidate.sourceItemId.trim() || !candidate.targetItemId.trim()
+      || candidate.sourceItemId !== candidate.sourceItemId.trim() || candidate.targetItemId !== candidate.targetItemId.trim()
+      || candidate.sourceItemId.length > 2_000 || candidate.targetItemId.length > 2_000
+      || /[\u0000-\u001f\u007f]/.test(candidate.sourceItemId) || /[\u0000-\u001f\u007f]/.test(candidate.targetItemId)) {
+      throw new Error('Each identity override needs a selected feature and two bounded, exact canonical item IDs.');
+    }
+    const override = {
+      feature: candidate.feature as keyof FeatureSelection,
+      sourceItemId: candidate.sourceItemId,
+      targetItemId: candidate.targetItemId
+    };
+    const id = `${override.feature}\u0000${override.sourceItemId}\u0000${override.targetItemId}`;
+    if (unique.has(id)) throw new Error('Identity overrides must not repeat the same source-to-target pair.');
+    unique.add(id);
+    return override;
+  });
+}
+
 export function buildAccountSyncRequest(values: AccountSyncFormValues): Record<string, unknown> {
   if (!ACCOUNT_SYNC_SERVICES.includes(values.source) || !ACCOUNT_SYNC_SERVICES.includes(values.target)) {
     throw new Error('Source and target must use a shipped account connector.');
@@ -166,6 +201,14 @@ export function buildAccountSyncRequest(values: AccountSyncFormValues): Record<s
   if (!values.dryRun && !values.confirmWrite) {
     throw new Error('Confirmed writes require the explicit confirmation checkbox.');
   }
+  if (values.conflictResolutions !== undefined && (!Array.isArray(values.conflictResolutions)
+    || values.conflictResolutions.length > 100
+    || values.conflictResolutions.some((resolution) => !/^[a-f0-9]{32}$/.test(resolution.id)
+      || (resolution.decision !== 'source' && resolution.decision !== 'target'))
+    || new Set(values.conflictResolutions.map((resolution) => resolution.id)).size !== values.conflictResolutions.length)) {
+    throw new Error('Per-record conflict choices must come from at most 100 unique preview matches.');
+  }
+  const identityOverrides = parseIdentityOverrides(values.identityOverridesText ?? '', values.selection);
 
   return {
     source: values.source,
@@ -175,6 +218,8 @@ export function buildAccountSyncRequest(values: AccountSyncFormValues): Record<s
     confirmWrite: !values.dryRun && values.confirmWrite,
     direction: values.direction,
     conflictPolicy: values.conflictPolicy,
+    ...(values.conflictResolutions?.length ? { conflictResolutions: values.conflictResolutions } : {}),
+    ...(identityOverrides?.length ? { identityOverrides } : {}),
     sourceContext: parseAccountConnectorContext(values.sourceContextText, 'Source'),
     targetContext: parseAccountConnectorContext(values.targetContextText, 'Target')
   };
@@ -229,7 +274,19 @@ function directionLabel(value: unknown): string | undefined {
   return source && target ? `${source} → ${target}` : undefined;
 }
 
-export function AccountSyncResultDetails({ result, error, apiKey = '' }: { result: AccountSyncResult; error?: string; apiKey?: string }) {
+export function AccountSyncResultDetails({
+  result,
+  error,
+  apiKey = '',
+  resolutions,
+  onResolve
+}: {
+  result: AccountSyncResult;
+  error?: string;
+  apiKey?: string;
+  resolutions?: Readonly<Record<string, 'source' | 'target'>>;
+  onResolve?: (id: string, decision: 'source' | 'target' | undefined) => void;
+}) {
   const actions = actionList(result.actions);
   const job = object(result.job) ? result.job : undefined;
   const savedBackupId = artifactId(result.targetBackupArtifact) ?? artifactId(job?.targetBackupArtifact);
@@ -257,7 +314,7 @@ export function AccountSyncResultDetails({ result, error, apiKey = '' }: { resul
         {(stringValue(action.reason) ?? stringValue(action.message)) ? ` (${String(stringValue(action.reason) ?? stringValue(action.message))})` : ''}
       </li>)}
     </ul>}
-    <ConflictReview review={conflictReview} />
+    <ConflictReview review={conflictReview} resolutions={resolutions} onResolve={onResolve} />
     <BackupCounts label="Source snapshot" value={result.sourceBackup} />
     <BackupCounts label="Pre-sync target snapshot" value={result.targetBackup} />
     {savedSourceBackupId && <p>Pre-write source backup: <BackupDownloadButton id={savedSourceBackupId} apiKey={apiKey} label={`download ${savedSourceBackupId}`} /></p>}
@@ -277,18 +334,37 @@ export function AccountSyncPanel() {
   const [confirmWrite, setConfirmWrite] = useState(false);
   const [sourceContextText, setSourceContextText] = useState('');
   const [targetContextText, setTargetContextText] = useState('');
+  const [identityOverridesText, setIdentityOverridesText] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<AccountSyncResult>();
   const [approvedPreviewSignature, setApprovedPreviewSignature] = useState<string>();
+  const [reviewBaseSignature, setReviewBaseSignature] = useState<string>();
+  const [conflictResolutions, setConflictResolutions] = useState<Record<string, 'source' | 'target'>>({});
 
   const selectedCount = Number(selection.ratings) + Number(selection.watched) + Number(selection.watchlist)
     + Number(selection.reviews) + Number(selection.following) + Number(selection.followers);
   const sameService = source === target;
-  const syncSignature = JSON.stringify([
-    source, target, selection, conflictPolicy, direction, sourceContextText, targetContextText
+  const baseSyncSignature = JSON.stringify([
+    source, target, selection, conflictPolicy, direction, sourceContextText, targetContextText, identityOverridesText
   ]);
+  function currentConflictDetails(): ConflictDetail[] {
+    try {
+      const job = object(result?.job) ? result.job : undefined;
+      return parseConflictReview(
+        result?.conflictDetails ?? job?.conflictDetails,
+        result?.conflictDetailsTruncated ?? job?.conflictDetailsTruncated
+      ).details;
+    } catch {
+      return [];
+    }
+  }
+
+  const currentResolutions = currentConflictDetails()
+    .filter((detail) => reviewBaseSignature === baseSyncSignature && conflictResolutions[detail.id] !== undefined)
+    .map((detail) => ({ id: detail.id, decision: conflictResolutions[detail.id]! }));
+  const syncSignature = JSON.stringify([baseSyncSignature, currentResolutions]);
   const previewMatches = approvedPreviewSignature === syncSignature;
 
   function setFeature(feature: keyof FeatureSelection, checked: boolean) {
@@ -309,7 +385,9 @@ export function AccountSyncPanel() {
         dryRun,
         confirmWrite,
         sourceContextText,
-        targetContextText
+        targetContextText,
+        conflictResolutions: currentResolutions,
+        identityOverridesText
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Account-sync settings are invalid.');
@@ -318,16 +396,22 @@ export function AccountSyncPanel() {
 
     setSubmitting(true);
     try {
-      setResult(await postAccountSyncJson(body, apiKey));
-      if (dryRun) setApprovedPreviewSignature(syncSignature);
+      const response = await postAccountSyncJson(body, apiKey);
+      setResult(response);
+      if (dryRun) {
+        setApprovedPreviewSignature(syncSignature);
+        setReviewBaseSignature(baseSyncSignature);
+      }
       else {
         setApprovedPreviewSignature(undefined);
+        setReviewBaseSignature(undefined);
         setDryRun(true);
         setConfirmWrite(false);
       }
     } catch (cause) {
       if (!dryRun) {
         setApprovedPreviewSignature(undefined);
+        setReviewBaseSignature(undefined);
         setDryRun(true);
         setConfirmWrite(false);
       }
@@ -342,10 +426,21 @@ export function AccountSyncPanel() {
     }
   }
 
+  function resolveConflict(id: string, decision: 'source' | 'target' | undefined) {
+    setConflictResolutions((current) => {
+      const next = { ...current };
+      if (decision) next[id] = decision;
+      else delete next[id];
+      return next;
+    });
+    setDryRun(true);
+    setConfirmWrite(false);
+  }
+
   return <section className="card account-sync-panel">
     <h2>Account to account sync</h2>
     <p>Read authorized accounts and preview a safe one-way transfer or two-way reconciliation between implemented account connectors.</p>
-    <p className="sensitive-warning">Provider tokens, connector contexts, and the optional WatchBridge API key stay only in this page's memory. The same-origin request omits browser credentials, and refreshing or closing the page clears them.</p>
+    <p className="sensitive-warning">Provider tokens, connector contexts, and the optional WatchBridge API key stay only in this page's memory. The same-origin request omits browser credentials, and refreshing or closing the page clears them. For an encrypted server vault record, use exactly <code>{'{ "vaultId": "UUID" }'}</code> as the matching service context.</p>
 
     <div className="grid">
       <label>Source account
@@ -405,6 +500,10 @@ export function AccountSyncPanel() {
         <textarea value={targetContextText} onChange={(event) => setTargetContextText(event.target.value)} rows={10} spellCheck={false} autoComplete="off" placeholder={CONTEXT_EXAMPLES[target] ?? '{\n  "accessToken": "provider-user-token"\n}'} />
       </label>
     </div>
+    <label>Exact identity overrides JSON (advanced, optional)
+      <textarea value={identityOverridesText} onChange={(event) => setIdentityOverridesText(event.target.value)} rows={4} spellCheck={false} placeholder={'[\n  { "feature": "ratings", "sourceItemId": "movie:source-id", "targetItemId": "movie:target-id" }\n]'} />
+    </label>
+    <p className="sensitive-warning">Use only a reviewed, exact source-to-target canonical item pair when normal IDs cannot match it. Overrides apply to this request only, require a selected feature and same media kind, never match social records, and always require a fresh preview before a write.</p>
 
     <div className="checkbox-row">
       <label><input type="checkbox" checked={dryRun} disabled={dryRun && !previewMatches} onChange={(event) => {
@@ -413,7 +512,7 @@ export function AccountSyncPanel() {
       }} /> Dry run (required before a matching write)</label>
       <label><input type="checkbox" checked={confirmWrite} disabled={dryRun || !previewMatches} onChange={(event) => setConfirmWrite(event.target.checked)} /> I reviewed the matching preview and confirm this remote account write</label>
     </div>
-    {!previewMatches && <p className="sensitive-warning">Run a dry-run preview after the latest account, feature, policy, direction, or connector-context change before enabling a confirmed write.</p>}
+    {!previewMatches && <p className="sensitive-warning">Run a dry-run preview after the latest account, feature, policy, direction, connector-context, identity-override, or per-record choice change before enabling a confirmed write.</p>}
     {!dryRun && <p className="sensitive-warning">A confirmed write first saves a recoverable target snapshot{direction === 'two-way' ? ' and a source snapshot' : ''}. The conflict review above is from this exact request.</p>}
 
     <button type="button" onClick={() => void submit()} disabled={submitting || selectedCount === 0 || sameService || (!dryRun && (!previewMatches || !confirmWrite))}>
@@ -421,6 +520,6 @@ export function AccountSyncPanel() {
     </button>
 
     {error && <p className="error" role="alert">{error}</p>}
-    {result && <AccountSyncResultDetails result={result} error={error} apiKey={apiKey} />}
+    {result && <AccountSyncResultDetails result={result} error={error} apiKey={apiKey} resolutions={conflictResolutions} onResolve={resolveConflict} />}
   </section>;
 }

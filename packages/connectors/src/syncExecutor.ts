@@ -1,4 +1,5 @@
-import { mediaItemsMatch, planSync, type CanonicalFollow, type CanonicalMediaItem, type CanonicalRating, type CanonicalReview, type CanonicalWatchedEntry, type CanonicalWatchlistEntry, type ConflictPolicy, type ExternalIds, type MediaKind, type ServiceId, type SyncOperation, type SyncRequest, type SyncSelection } from '@watchbridge/core';
+import { createHash } from 'node:crypto';
+import { mediaItemsMatch, planSync, type CanonicalFollow, type CanonicalMediaItem, type CanonicalRating, type CanonicalReview, type CanonicalWatchedEntry, type CanonicalWatchlistEntry, type ConflictPolicy, type ExternalIds, type MediaKind, type ServiceId, type SyncConflictResolution, type SyncIdentityOverride, type SyncOperation, type SyncRequest, type SyncSelection } from '@watchbridge/core';
 import type { ConnectorBackup, ConnectorContext, WatchBridgeConnector } from './base.js';
 import { createBackupArchive } from './backupSchema.js';
 
@@ -29,6 +30,8 @@ export const MAX_SYNC_CONFLICT_DETAILS = 100;
 export type SyncConflictDecision = 'source' | 'target' | 'unchanged' | 'unresolved';
 export type SyncConflictReason =
   | 'manual-review-required'
+  | 'manual-source-selected'
+  | 'manual-target-selected'
   | 'source-wins-policy'
   | 'target-wins-policy'
   | 'newest-source'
@@ -60,6 +63,8 @@ export interface SyncConflictSideSummary {
 }
 
 export interface SyncConflictDetail {
+  /** Opaque key for a per-record resolution; it contains no credentials or record body. */
+  id: string;
   feature: SyncFeature;
   direction: SyncExecutionDirection;
   identity: SyncConflictIdentity;
@@ -239,7 +244,7 @@ function recordsMatch(feature: SyncFeature, left: SyncRecord, right: SyncRecord)
 }
 
 const externalIdKeys: Array<keyof ExternalIds> = [
-  'imdb', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
+  'imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
   'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby',
   'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk',
   'movielens', 'letterboxdSlug'
@@ -248,6 +253,35 @@ const externalIdKeys: Array<keyof ExternalIds> = [
 interface ConflictDetailCollector {
   details: SyncConflictDetail[];
   truncated: number;
+}
+
+interface ConflictResolutionTracker {
+  decisions: Map<string, SyncConflictResolution['decision']>;
+  used: Set<string>;
+}
+
+function createIdentityOverrides(overrides: SyncIdentityOverride[] | undefined): Set<string> {
+  if (overrides === undefined) return new Set();
+  if (!Array.isArray(overrides) || overrides.length > MAX_SYNC_CONFLICT_DETAILS) throw new Error(`At most ${MAX_SYNC_CONFLICT_DETAILS} identity overrides are allowed.`);
+  const output = new Set<string>();
+  for (const override of overrides) {
+    if (!override || typeof override !== 'object' || !features.includes(override.feature)
+      || typeof override.sourceItemId !== 'string' || typeof override.targetItemId !== 'string'
+      || !override.sourceItemId.trim() || !override.targetItemId.trim()
+      || override.sourceItemId !== override.sourceItemId.trim() || override.targetItemId !== override.targetItemId.trim()
+      || /[\u0000-\u001f\u007f]/.test(override.sourceItemId) || /[\u0000-\u001f\u007f]/.test(override.targetItemId)
+      || override.sourceItemId.length > 2_000 || override.targetItemId.length > 2_000) {
+      throw new Error('Each identity override must name a selected feature and two bounded canonical item IDs.');
+    }
+    output.add(`${override.feature}\u0000${override.sourceItemId}\u0000${override.targetItemId}`);
+  }
+  return output;
+}
+
+function recordsMatchWithOverrides(feature: SyncFeature, left: SyncRecord, right: SyncRecord, overrides: Set<string>): boolean {
+  if (recordsMatch(feature, left, right)) return true;
+  if (isSocialRecord(left) || isSocialRecord(right) || left.item.kind !== right.item.kind) return false;
+  return overrides.has(`${feature}\u0000${left.item.id}\u0000${right.item.id}`);
 }
 
 interface ConflictOutcome {
@@ -259,6 +293,27 @@ interface ConflictOutcome {
 function addConflictDetail(collector: ConflictDetailCollector, detail: SyncConflictDetail): void {
   if (collector.details.length < MAX_SYNC_CONFLICT_DETAILS) collector.details.push(detail);
   else collector.truncated += 1;
+}
+
+function createConflictResolutionTracker(resolutions: SyncConflictResolution[] | undefined): ConflictResolutionTracker {
+  if (resolutions === undefined) return { decisions: new Map(), used: new Set() };
+  if (!Array.isArray(resolutions) || resolutions.length > MAX_SYNC_CONFLICT_DETAILS) {
+    throw new Error(`At most ${MAX_SYNC_CONFLICT_DETAILS} per-record conflict resolutions are allowed.`);
+  }
+  const decisions = new Map<string, SyncConflictResolution['decision']>();
+  for (const resolution of resolutions) {
+    if (!resolution || typeof resolution !== 'object' || !/^[a-f0-9]{32}$/.test(resolution.id)
+      || (resolution.decision !== 'source' && resolution.decision !== 'target') || decisions.has(resolution.id)) {
+      throw new Error('Each per-record conflict resolution must have one unique preview conflict identifier and a source or target decision.');
+    }
+    decisions.set(resolution.id, resolution.decision);
+  }
+  return { decisions, used: new Set() };
+}
+
+function assertAllConflictResolutionsUsed(tracker: ConflictResolutionTracker): void {
+  if (tracker.decisions.size === tracker.used.size) return;
+  throw new Error('A per-record conflict resolution no longer matches the current manual-review preview. Run a fresh dry-run and choose again.');
 }
 
 function boundedLabel(value: string, maximum: number): string {
@@ -348,7 +403,7 @@ function conflictDetail(
   targetRecord: SyncRecord,
   outcome: ConflictOutcome
 ): SyncConflictDetail {
-  return {
+  const detail = {
     feature,
     direction,
     identity: conflictIdentity(sourceRecord, targetRecord),
@@ -357,6 +412,37 @@ function conflictDetail(
     decision: outcome.decision,
     reason: outcome.reason
   };
+  // The identifier covers only bounded, redacted review evidence. It is
+  // recomputed from the freshly exported accounts, so a stale choice cannot
+  // target a different record after either side changes.
+  return {
+    ...detail,
+    id: createHash('sha256').update(JSON.stringify({
+      feature: detail.feature,
+      direction: detail.direction,
+      identity: detail.identity,
+      source: detail.source,
+      target: detail.target
+    })).digest('hex').slice(0, 32)
+  };
+}
+
+function applyManualResolution(
+  automatic: ConflictOutcome,
+  detail: SyncConflictDetail,
+  tracker: ConflictResolutionTracker
+): ConflictOutcome {
+  if (automatic.reason !== 'manual-review-required') return automatic;
+  const decision = tracker.decisions.get(detail.id);
+  if (!decision) return automatic;
+  tracker.used.add(detail.id);
+  return decision === 'source'
+    ? { includeSource: true, decision: 'source', reason: 'manual-source-selected' }
+    : { includeSource: false, decision: 'target', reason: 'manual-target-selected' };
+}
+
+function detailWithOutcome(detail: SyncConflictDetail, outcome: ConflictOutcome): SyncConflictDetail {
+  return { ...detail, decision: outcome.decision, reason: outcome.reason };
 }
 
 function oneWayConflictOutcome(
@@ -387,21 +473,25 @@ function resolveConflicts(
   existing: SyncRecords,
   policy: ConflictPolicy,
   direction: SyncExecutionDirection,
-  collector: ConflictDetailCollector
+  collector: ConflictDetailCollector,
+  resolutionTracker: ConflictResolutionTracker,
+  identityOverrides: Set<string>
 ): { records: SyncRecords; conflicts: number } {
   const records: SyncRecords = [];
   let conflicts = 0;
   for (const record of incoming) {
     const targetRecord = existing
-      .filter((candidate) => recordsMatch(feature, record, candidate))
+      .filter((candidate) => recordsMatchWithOverrides(feature, record, candidate, identityOverrides))
       .sort((left, right) => (timestamp(right) ?? Number.NEGATIVE_INFINITY) - (timestamp(left) ?? Number.NEGATIVE_INFINITY))[0];
     if (!targetRecord) {
       records.push(record as never);
       continue;
     }
     conflicts += 1;
-    const outcome = oneWayConflictOutcome(feature, record, targetRecord, policy);
-    addConflictDetail(collector, conflictDetail(feature, direction, record, targetRecord, outcome));
+    const automatic = oneWayConflictOutcome(feature, record, targetRecord, policy);
+    const initialDetail = conflictDetail(feature, direction, record, targetRecord, automatic);
+    const outcome = applyManualResolution(automatic, initialDetail, resolutionTracker);
+    addConflictDetail(collector, detailWithOutcome(initialDetail, outcome));
     if (outcome.includeSource) records.push(record as never);
   }
   return { records, conflicts };
@@ -536,7 +626,9 @@ function resolveTwoWayConflicts(
   targetInput: SyncRecords,
   policy: ConflictPolicy,
   direction: SyncExecutionDirection,
-  collector: ConflictDetailCollector
+  collector: ConflictDetailCollector,
+  resolutionTracker: ConflictResolutionTracker,
+  identityOverrides: Set<string>
 ): { sourceToTarget: SyncRecords; targetToSource: SyncRecords; conflicts: number } {
   const sourceRecords = deduplicateRecords(feature, sourceInput);
   const targetRecords = deduplicateRecords(feature, targetInput);
@@ -547,7 +639,7 @@ function resolveTwoWayConflicts(
 
   for (const sourceRecord of sourceRecords) {
     const targetIndex = targetRecords.findIndex((candidate, index) =>
-      !matchedTargetIndexes.has(index) && recordsMatch(feature, sourceRecord, candidate));
+      !matchedTargetIndexes.has(index) && recordsMatchWithOverrides(feature, sourceRecord, candidate, identityOverrides));
     if (targetIndex < 0) {
       sourceToTarget.push(sourceRecord);
       continue;
@@ -568,9 +660,14 @@ function resolveTwoWayConflicts(
       continue;
     }
     if (policy === 'manual') {
-      addConflictDetail(collector, conflictDetail(feature, direction, sourceRecord, targetRecord, {
+      const automatic: ConflictOutcome = {
         includeSource: false, decision: 'unresolved', reason: 'manual-review-required'
-      }));
+      };
+      const initialDetail = conflictDetail(feature, direction, sourceRecord, targetRecord, automatic);
+      const outcome = applyManualResolution(automatic, initialDetail, resolutionTracker);
+      addConflictDetail(collector, detailWithOutcome(initialDetail, outcome));
+      if (outcome.decision === 'source') sourceToTarget.push(sourceRecord);
+      if (outcome.decision === 'target') targetToSource.push(targetRecord);
       continue;
     }
     if (policy === 'source-wins') {
@@ -675,6 +772,8 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
   const conflictPolicy = request.conflictPolicy ?? 'manual';
   const actionPlans: PlannedAction[] = [];
   const conflictCollector: ConflictDetailCollector = { details: [], truncated: 0 };
+  const resolutionTracker = createConflictResolutionTracker(request.conflictResolutions);
+  const identityOverrides = createIdentityOverrides(request.identityOverrides);
 
   if (twoWay) {
     for (const feature of selected(request.selection)) {
@@ -695,7 +794,9 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
         targetRecords,
         conflictPolicy,
         sourceToTarget,
-        conflictCollector
+        conflictCollector,
+        resolutionTracker,
+        identityOverrides
       );
       for (const [direction, records, importer, incomingRecords] of [
         [sourceToTarget, resolved.sourceToTarget, targetImporter, sourceRecords],
@@ -746,7 +847,9 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
         existing,
         conflictPolicy,
         { source: request.source, target: request.target },
-        conflictCollector
+        conflictCollector,
+        resolutionTracker,
+        identityOverrides
       );
       const completeRecords = includeWatchedDependencyClosure(feature, request.target, resolved.records, records);
       if (completeRecords.length === 0) {
@@ -769,6 +872,8 @@ export async function executeSync(request: SyncExecutionRequest, connectors: Syn
       } });
     }
   }
+
+  assertAllConflictResolutionsUsed(resolutionTracker);
 
   // All selected writes in both directions are transformed and validated
   // before the first mutation. A connector preflight may perform documented

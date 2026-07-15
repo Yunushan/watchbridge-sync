@@ -12,6 +12,8 @@ import {
 } from '@watchbridge/core';
 import { createRoot } from 'react-dom/client';
 import { OAuthPanel } from './OAuthPanel.js';
+import { OAuthVaultPanel } from './OAuthVaultPanel.js';
+import { isOAuthCallbackPath, OAuthCallbackRelay } from './OAuthCallbackRelay.js';
 import { BackupSyncPanel } from './BackupSyncPanel.js';
 import { AccountSyncPanel } from './AccountSyncPanel.js';
 import { SupportPercentagePanel } from './SupportPercentagePanel.js';
@@ -66,6 +68,7 @@ const categories: Array<{ id: ServiceCategory; label: string }> = [
 ];
 
 export function App() {
+  if (typeof window !== 'undefined' && isOAuthCallbackPath(window.location.pathname)) return <OAuthCallbackRelay />;
   const [source, setSource] = useState<ServiceId>('letterboxd');
   const [target, setTarget] = useState<ServiceId>('imdb');
   const [rating, setRating] = useState(4.5);
@@ -198,6 +201,8 @@ export function App() {
       <MetadataDiscoveryPanel />
 
       <OAuthPanel />
+
+      <OAuthVaultPanel />
 
       <AccountSyncPanel />
 

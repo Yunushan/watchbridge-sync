@@ -5,7 +5,7 @@ const STORAGE_ALGORITHM = 'A256GCM' as const;
 const NONCE_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 
-export type StorageRecordKind = 'backup' | 'job';
+export type StorageRecordKind = 'backup' | 'job' | 'oauth-transaction' | 'oauth-vault';
 
 export interface DecodedStoredJson {
   plaintext: string;

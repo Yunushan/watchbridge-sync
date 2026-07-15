@@ -19,6 +19,7 @@ describe('MetadataDiscoveryPanel', () => {
     expect(html).toContain('Metadata and recommendations');
     expect(html).toContain('TMDb');
     expect(html).toContain('OMDb');
+    expect(html).toContain('Wikidata');
     expect(html).toContain('TVmaze');
     expect(html).toContain('TheTVDB');
     expect(html).toContain('Kitsu');
@@ -70,6 +71,16 @@ describe('metadata request construction', () => {
       .toThrow('does not support Movie');
     expect(() => buildMetadataRequest({ provider: 'kitsu', kind: 'anime', title: 'No ID' }))
       .toThrow('Kitsu resource ID is required');
+    expect(buildMetadataRequest({
+      provider: 'wikidata', kind: 'movie', title: 'Film', wikidataId: 'Q11424'
+    })).toMatchObject({
+      service: 'wikidata',
+      item: { kind: 'movie', externalIds: { wikidata: 'Q11424' } },
+      context: {}
+    });
+    expect(() => buildMetadataRequest({
+      provider: 'wikidata', kind: 'movie', title: 'Film', wikidataId: 'q11424'
+    })).toThrow('exact Q-item ID');
   });
 
   it('requires request-scoped credentials and avoids sending unused TheTVDB secrets', () => {
