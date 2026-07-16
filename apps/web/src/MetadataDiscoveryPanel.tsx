@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import type { CanonicalMediaItem, MediaKind } from '@watchbridge/core';
 
-const METADATA_PROVIDERS = ['tmdb', 'omdb', 'wikidata', 'tvmaze', 'thetvdb', 'kitsu'] as const;
+const METADATA_PROVIDERS = ['tmdb', 'omdb', 'watchmode', 'wikidata', 'tvmaze', 'thetvdb', 'kitsu'] as const;
 export type MetadataProvider = (typeof METADATA_PROVIDERS)[number];
 
 const MEDIA_KINDS: Record<MetadataProvider, readonly MediaKind[]> = {
   tmdb: ['movie', 'tv-show'],
   omdb: ['movie', 'tv-show', 'episode'],
+  watchmode: ['movie', 'tv-show'],
   wikidata: ['movie', 'tv-show', 'episode', 'anime', 'manga'],
   tvmaze: ['tv-show'],
   thetvdb: ['movie', 'tv-show'],
@@ -16,6 +17,7 @@ const MEDIA_KINDS: Record<MetadataProvider, readonly MediaKind[]> = {
 const PROVIDER_LABELS: Record<MetadataProvider, string> = {
   tmdb: 'TMDb',
   omdb: 'OMDb',
+  watchmode: 'Watchmode',
   wikidata: 'Wikidata',
   tvmaze: 'TVmaze',
   thetvdb: 'TheTVDB',
@@ -41,7 +43,7 @@ const WIKIDATA_ID = /^Q[1-9]\d{0,11}$/;
 const ALL_MEDIA_KINDS: readonly MediaKind[] = ['movie', 'tv-show', 'season', 'episode', 'anime', 'manga'];
 const CANONICAL_ITEM_FIELDS = new Set(['id', 'kind', 'title', 'originalTitle', 'year', 'seasonNumber', 'episodeNumber', 'externalIds']);
 const CANONICAL_EXTERNAL_ID_FIELDS = new Set([
-  'imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
+  'imdb', 'watchmode', 'movary', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
   'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby',
   'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk',
   'movielens', 'letterboxdSlug'
@@ -58,6 +60,7 @@ export interface MetadataLookupInput {
   wikidataId?: string;
   kitsuId?: string;
   omdbApiKey?: string;
+  watchmodeApiKey?: string;
   tmdbApplicationToken?: string;
   tmdbApiKey?: string;
   tvdbAccessToken?: string;
@@ -210,6 +213,12 @@ export function buildMetadataRequest(input: MetadataLookupInput): Record<string,
     if (!imdbId) throw new Error('OMDb requires an exact IMDb title ID.');
     const apiKey = optionalSecret(input.omdbApiKey, 'OMDb API key', 2_000);
     if (!apiKey) throw new Error('OMDb requires an API key.');
+    context.apiKey = apiKey;
+  }
+  if (input.provider === 'watchmode') {
+    if (!imdbId) throw new Error('Watchmode requires an exact IMDb title ID.');
+    const apiKey = optionalSecret(input.watchmodeApiKey, 'Watchmode API key', 2_000);
+    if (!apiKey) throw new Error('Watchmode requires an API key.');
     context.apiKey = apiKey;
   }
 
@@ -451,8 +460,8 @@ export function MetadataDiscoveryPanel() {
           </label>}
         </div>
 
-        {(metadata.provider === 'tmdb' || metadata.provider === 'tvmaze' || metadata.provider === 'omdb') && <label>
-          IMDb title ID ({metadata.provider === 'omdb' ? 'required exact lookup' : 'optional exact lookup'})
+        {(metadata.provider === 'tmdb' || metadata.provider === 'tvmaze' || metadata.provider === 'omdb' || metadata.provider === 'watchmode') && <label>
+          IMDb title ID ({metadata.provider === 'omdb' || metadata.provider === 'watchmode' ? 'required exact lookup' : 'optional exact lookup'})
           <input placeholder="tt0113277" value={metadata.imdbId} onChange={(event) => setMetadata((current) => ({ ...current, imdbId: event.target.value }))} disabled={metadataWorking} />
         </label>}
         {metadata.provider === 'tvmaze' && <label>TheTVDB ID (optional exact lookup)
@@ -471,6 +480,12 @@ export function MetadataDiscoveryPanel() {
             <input type="password" autoComplete="off" value={metadata.omdbApiKey ?? ''} onChange={(event) => setMetadata((current) => ({ ...current, omdbApiKey: event.target.value }))} disabled={metadataWorking} />
           </label>
           <p className="support-footnote">Exact IMDb-ID metadata only. OMDb content is CC BY-NC 4.0, and OMDb limits use to personal, non-commercial purposes. WatchBridge does not call its title search or poster API.</p>
+        </div>}
+        {metadata.provider === 'watchmode' && <div className="context-grid">
+          <label>Watchmode API key
+            <input type="password" autoComplete="off" value={metadata.watchmodeApiKey ?? ''} onChange={(event) => setMetadata((current) => ({ ...current, watchmodeApiKey: event.target.value }))} disabled={metadataWorking} />
+          </label>
+          <p className="support-footnote">Exact IMDb-ID metadata only. Watchmode title search, account data, images, caching, and streaming-source display are not used. Your API-key plan may require attribution and its terms govern use.</p>
         </div>}
         {metadata.provider === 'wikidata' && <>
           <label>Wikidata exact Q-item ID

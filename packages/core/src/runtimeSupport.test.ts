@@ -5,15 +5,15 @@ import { SERVICE_DEFINITIONS, type IntegrationReadiness } from './services.js';
 import type { ConnectorCapability, ServiceId } from './types.js';
 
 const EXPECTED_WORKFLOWS: Record<RuntimeWorkflow, ServiceId[]> = {
-  'direct-account': ['tmdb', 'trakt', 'simkl', 'myanimelist', 'shikimori', 'annict', 'bangumi', 'jellyfin', 'emby', 'kodi', 'plex'],
+  'direct-account': ['tmdb', 'trakt', 'simkl', 'myanimelist', 'shikimori', 'annict', 'bangumi', 'jellyfin', 'emby', 'kodi', 'plex', 'movary', 'anilist'],
   'dedicated-file': ['imdb', 'letterboxd', 'movielens'],
-  'metadata-recommendation': ['omdb', 'wikidata', 'thetvdb', 'tvmaze', 'tastedive', 'kitsu'],
+  'metadata-recommendation': ['omdb', 'watchmode', 'wikidata', 'thetvdb', 'tvmaze', 'tastedive', 'kitsu'],
   'manual-mapping': [
     'tv-time', 'metacritic', 'reelgood', 'serializd', 'allmovie', 'criticker',
     'filmaffinity', 'flickchart', 'tasteio', 'mubi', 'common-sense-media',
     'douban-movie', 'kinopoisk'
   ],
-  restricted: ['rotten-tomatoes', 'justwatch', 'anilist']
+  restricted: ['rotten-tomatoes', 'justwatch']
 };
 
 const READINESS_WORKFLOW: Record<Exclude<IntegrationReadiness, 'planned'>, RuntimeWorkflow> = {
@@ -35,8 +35,8 @@ const FEATURE_CAPABILITIES = {
 
 describe('shipped runtime support registry', () => {
   it('classifies every selectable service exactly once', () => {
-    expect(SERVICE_DEFINITIONS).toHaveLength(36);
-    expect(new Set(SERVICE_DEFINITIONS.map((service) => service.id)).size).toBe(36);
+    expect(SERVICE_DEFINITIONS).toHaveLength(38);
+    expect(new Set(SERVICE_DEFINITIONS.map((service) => service.id)).size).toBe(38);
     expect(Object.keys(SERVICE_RUNTIME_SUPPORT).sort()).toEqual(SERVICE_DEFINITIONS.map((service) => service.id).sort());
 
     for (const [workflow, expected] of Object.entries(EXPECTED_WORKFLOWS) as Array<[RuntimeWorkflow, ServiceId[]]>) {

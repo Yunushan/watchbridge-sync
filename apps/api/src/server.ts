@@ -649,7 +649,7 @@ function connectorContext(value: unknown): ConnectorContext | undefined {
 
 const mediaKinds: readonly MediaKind[] = ['movie', 'tv-show', 'season', 'episode', 'anime', 'manga'];
 const mediaItemKeys = new Set(['id', 'kind', 'title', 'originalTitle', 'year', 'seasonNumber', 'episodeNumber', 'externalIds']);
-const externalIdKeys = new Set(['imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk', 'movielens', 'letterboxdSlug']);
+const externalIdKeys = new Set(['imdb', 'watchmode', 'movary', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk', 'movielens', 'letterboxdSlug']);
 
 function canonicalMediaItem(value: unknown): CanonicalMediaItem | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
@@ -669,7 +669,7 @@ function canonicalMediaItem(value: unknown): CanonicalMediaItem | undefined {
   const externalIdsInput = item.externalIds as Record<string, unknown>;
   if (Object.keys(externalIdsInput).some((key) => !externalIdKeys.has(key))) return undefined;
   const externalIds: ExternalIds = {};
-  for (const key of ['tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'kodi', 'anilist', 'movielens'] as const) {
+  for (const key of ['watchmode', 'movary', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'kodi', 'anilist', 'movielens'] as const) {
     const candidate = externalIdsInput[key];
     if (candidate === undefined) continue;
     if (typeof candidate !== 'number' || !Number.isSafeInteger(candidate) || candidate <= 0) return undefined;
@@ -979,7 +979,7 @@ interface SyncJobRecord {
 const conflictFeatures = new Set(syncFeatures);
 const conflictIdentityKinds = new Set(['movie', 'tv-show', 'season', 'episode', 'anime', 'manga', 'profile']);
 const conflictIdProviders = new Set([
-  'imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
+  'imdb', 'watchmode', 'movary', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
   'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby',
   'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk',
   'movielens', 'letterboxdSlug'

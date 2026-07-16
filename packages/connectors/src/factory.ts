@@ -2,13 +2,16 @@ import type { ServiceId } from '@watchbridge/core';
 import type { WatchBridgeConnector } from './base.js';
 import { BangumiConnector } from './bangumi.js';
 import { AnnictConnector } from './annict.js';
+import { AniListConnector } from './anilist.js';
 import { EmbyConnector } from './emby.js';
 import { JellyfinConnector } from './jellyfin.js';
 import { KodiConnector } from './kodi.js';
 import { KitsuConnector } from './kitsu.js';
 import { OmdbConnector } from './omdb.js';
+import { WatchmodeConnector } from './watchmode.js';
 import { PlexConnector } from './plex.js';
 import { MyAnimeListConnector } from './myanimelist.js';
+import { MovaryConnector } from './movary.js';
 import { ShikimoriConnector } from './shikimori.js';
 import { SimklConnector } from './simkl.js';
 import { TasteDiveConnector } from './tastedive.js';
@@ -35,6 +38,8 @@ export function createOfficialConnector(service: ServiceId): WatchBridgeConnecto
     case 'emby': return new EmbyConnector();
     case 'kodi': return new KodiConnector();
     case 'plex': return new PlexConnector();
+    case 'movary': return new MovaryConnector();
+    case 'anilist': return new AniListConnector();
     default: return undefined;
   }
 }
@@ -44,6 +49,7 @@ export function createMetadataConnector(service: ServiceId): WatchBridgeConnecto
   switch (service) {
     case 'tmdb': return new TmdbConnector();
     case 'omdb': return new OmdbConnector();
+    case 'watchmode': return new WatchmodeConnector();
     case 'tvmaze': return new TvMazeConnector();
     case 'thetvdb': return new TheTvdbConnector();
     case 'kitsu': return new KitsuConnector();

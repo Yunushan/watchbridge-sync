@@ -554,13 +554,13 @@ describe('API access gate', () => {
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     await expect(response.json()).resolves.toMatchObject({
       platforms: {
-        selectable: { supported: 36, percent: 100, missingPercent: 0 },
-        directAccount: { supported: 11, percent: 30.6, missingPercent: 69.4 },
-        fullThreeFeatureDirect: { supported: 6, percent: 16.7 },
-        allModelFeaturesDirect: { supported: 1, percent: 2.8, missingPercent: 97.2, services: ['trakt'] }
+        selectable: { supported: 38, percent: 100, missingPercent: 0 },
+        directAccount: { supported: 13, percent: 34.2, missingPercent: 65.8 },
+        fullThreeFeatureDirect: { supported: 7, percent: 18.4 },
+        allModelFeaturesDirect: { supported: 2, percent: 5.3, missingPercent: 94.7, services: ['trakt', 'anilist'] }
       },
       featureFamilies: { executable: { supported: 6, total: 6, percent: 100, missingPercent: 0 } },
-      featureSlots: { automatedTarget: { supported: 33, total: 216, percent: 15.3, missingPercent: 84.7 } },
+      featureSlots: { automatedTarget: { supported: 40, total: 228, percent: 17.5, missingPercent: 82.5 } },
       directions: { executable: { supported: 2, total: 2, percent: 100, missingPercent: 0 } }
     });
   });

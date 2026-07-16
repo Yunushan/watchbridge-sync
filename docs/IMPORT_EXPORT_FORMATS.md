@@ -75,7 +75,7 @@ Letterboxd accepts any non-empty combination of its four executable families:
 }
 ```
 
-Letterboxd review text and an optional attached rating round-trip through backup v1. MovieLens requires `ratings` and `movies`; `links` and a user selector are optional:
+Review text, an optional provider-required summary, and an optional attached rating round-trip through backup v1. A target connector may reject review fields its provider cannot reproduce; for example, AniList writes require a bounded summary and do not accept spoiler or review-date fields. MovieLens requires `ratings` and `movies`; `links` and a user selector are optional:
 
 ```json
 {

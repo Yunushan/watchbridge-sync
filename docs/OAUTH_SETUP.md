@@ -1,6 +1,6 @@
 # OAuth Setup
 
-WatchBridge ships authorization helpers for six of the eleven direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, Shikimori, and Annict. Bangumi accepts a separately obtained official access token; Jellyfin and Emby accept tokens issued by their selected self-hosted servers; Kodi accepts request-scoped HTTP Basic credentials for one owner-selected JSON-RPC server; Plex accepts a caller-provided account token and selected server context. None of those other five has a dedicated WatchBridge authorization flow. The API, CLI, and web UI do not persist provider secrets or returned tokens, and they do not collect third-party site passwords.
+WatchBridge ships authorization helpers for six of the thirteen direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, Shikimori, and Annict. Bangumi accepts a separately obtained official access token; Jellyfin and Emby accept tokens issued by their selected self-hosted servers; Kodi accepts request-scoped HTTP Basic credentials for one owner-selected JSON-RPC server; Plex accepts a caller-provided account token and selected server context; Movary accepts a caller-provided API token, username, and explicit HTTPS `/api/` server URL; AniList accepts a caller-provided OAuth access token. None of those other seven has a dedicated WatchBridge authorization flow. The API, CLI, and web UI do not persist provider secrets or returned tokens, and they do not collect third-party site passwords.
 
 Register your own provider application before using these flows. Put request files under the ignored `private/` directory and never commit client secrets, authorization codes, device codes, access tokens, or refresh tokens.
 
@@ -381,7 +381,7 @@ Official references: [Plex Media Server API](https://developer.plex.tv/pms/) and
 
 ## Why Kitsu has no account authorization helper
 
-Kitsu is a metadata/recommendation-workflow entry, not one of the eleven direct-account connectors. The shipped connector makes public exact-ID JSON:API reads for anime, manga, and episodes and sends no authorization header. In the current official source OpenAPI, the user/library-entry paths and schemas needed for account synchronization are commented out, while the remaining authentication chapter describes a password grant. WatchBridge does not collect Kitsu passwords or treat legacy/commented contracts as account support, so Kitsu remains **0/6** across the canonical account-sync families.
+Kitsu is a metadata/recommendation-workflow entry, not one of the thirteen direct-account connectors. The shipped connector makes public exact-ID JSON:API reads for anime, manga, and episodes and sends no authorization header. In the current official source OpenAPI, the user/library-entry paths and schemas needed for account synchronization are commented out, while the remaining authentication chapter describes a password grant. WatchBridge does not collect Kitsu passwords or treat legacy/commented contracts as account support, so Kitsu remains **0/6** across the canonical account-sync families.
 
 Official references: [rendered Kitsu OpenAPI](https://hummingbird-me.github.io/api-docs/) and [source OpenAPI root](https://github.com/hummingbird-me/api-docs/blob/openapi3/api/kitsu.yml).
 

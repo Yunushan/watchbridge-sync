@@ -4,6 +4,8 @@ export type ServiceId =
   | 'letterboxd'
   | 'tmdb'
   | 'omdb'
+  | 'watchmode'
+  | 'movary'
   | 'wikidata'
   | 'tv-time'
   | 'trakt'
@@ -40,6 +42,10 @@ export type MediaKind = 'movie' | 'tv-show' | 'season' | 'episode' | 'anime' | '
 
 export interface ExternalIds {
   imdb?: string;
+  /** Watchmode title ID; public discovery identity, never an account identity. */
+  watchmode?: number;
+  /** Movary movie ID, scoped to the explicitly selected self-hosted server. */
+  movary?: number;
   /** Exact Wikidata Q-item ID, such as Q11424. */
   wikidata?: string;
   tmdbMovie?: number;
@@ -131,6 +137,8 @@ export interface CanonicalReview {
   item: CanonicalMediaItem;
   service: ServiceId;
   body: string;
+  /** Optional provider-required review summary/title, retained verbatim when supplied. */
+  summary?: string;
   rating?: CanonicalRating;
   spoiler?: boolean;
   reviewedAt?: string;

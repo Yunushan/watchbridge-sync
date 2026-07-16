@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getServiceDefinition, SERVICE_DEFINITIONS, type ConflictPolicy, type ServiceId } from '@watchbridge/core';
+import { getServiceDefinition, mediaItemsMatch, SERVICE_DEFINITIONS, type CanonicalMediaItem, type ConflictPolicy, type ServiceId } from '@watchbridge/core';
 import { BackupDownloadButton } from './BackupDownloadButton.js';
 import { ConflictReview, parseConflictReview, type ConflictDetail } from './ConflictReview.js';
 
@@ -39,6 +39,14 @@ export const CONTEXT_EXAMPLES: Partial<Record<AccountService, string>> = {
     accessToken: 'emby-user-token',
     accountId: 'emby-user-id',
     baseUrl: 'https://emby.example.test/'
+  }, null, 2),
+  movary: JSON.stringify({
+    accessToken: 'movary-user-token',
+    accountId: 'movary-username',
+    baseUrl: 'https://movary.example.test/api/'
+  }, null, 2),
+  anilist: JSON.stringify({
+    accessToken: 'anilist-oauth-access-token'
   }, null, 2),
   kodi: JSON.stringify({
     username: 'kodi-user',
@@ -114,6 +122,22 @@ export interface AccountSyncFormValues {
   identityOverridesText?: string;
 }
 
+export interface AccountIdentityOverride {
+  feature: keyof FeatureSelection;
+  sourceItemId: string;
+  targetItemId: string;
+}
+
+export interface IdentityOverrideCandidate extends AccountIdentityOverride {
+  sourceTitle: string;
+  targetTitle: string;
+  kind: CanonicalMediaItem['kind'];
+  /** Conservative title-token similarity, shown only as review context. */
+  similarity: number;
+  /** Bounded, non-sensitive explanation of the evidence used for this hint. */
+  evidence: string;
+}
+
 export class AccountSyncRequestError extends Error {
   constructor(message: string, readonly details?: AccountSyncResult) {
     super(message);
@@ -156,7 +180,7 @@ export function parseAccountConnectorContext(text: string, label: string): Recor
   return value;
 }
 
-export function parseIdentityOverrides(text: string, selection: FeatureSelection): Array<{ feature: keyof FeatureSelection; sourceItemId: string; targetItemId: string }> | undefined {
+export function parseIdentityOverrides(text: string, selection: FeatureSelection): AccountIdentityOverride[] | undefined {
   if (!text.trim()) return undefined;
   let value: unknown;
   try {
@@ -187,6 +211,110 @@ export function parseIdentityOverrides(text: string, selection: FeatureSelection
     unique.add(id);
     return override;
   });
+}
+
+function candidateMediaItem(value: unknown): CanonicalMediaItem | undefined {
+  if (!object(value) || typeof value.id !== 'string' || !value.id.trim() || value.id.length > 2_000
+    || typeof value.title !== 'string' || !value.title.trim() || value.title.length > 2_000
+    || !['movie', 'tv-show', 'season', 'episode', 'anime', 'manga'].includes(String(value.kind))
+    || !object(value.externalIds)) return undefined;
+  const item: CanonicalMediaItem = {
+    id: value.id,
+    kind: value.kind as CanonicalMediaItem['kind'],
+    title: value.title,
+    externalIds: value.externalIds as CanonicalMediaItem['externalIds']
+  };
+  if (typeof value.year === 'number' && Number.isSafeInteger(value.year) && value.year >= 0 && value.year <= 3_000) item.year = value.year;
+  if (typeof value.seasonNumber === 'number' && Number.isSafeInteger(value.seasonNumber) && value.seasonNumber >= 0) item.seasonNumber = value.seasonNumber;
+  if (typeof value.episodeNumber === 'number' && Number.isSafeInteger(value.episodeNumber) && value.episodeNumber >= 0) item.episodeNumber = value.episodeNumber;
+  return item;
+}
+
+function titleTokens(value: string): Set<string> {
+  const ignored = new Set(['a', 'an', 'and', 'at', 'by', 'for', 'from', 'in', 'of', 'on', 'the', 'to', 'with']);
+  return new Set(value.toLocaleLowerCase('en-US').replace(/[^\p{L}\p{N}]+/gu, ' ').split(' ')
+    .filter((token) => token.length > 1 && !ignored.has(token)));
+}
+
+function normalizedCandidateTitle(value: string): string {
+  return [...titleTokens(value)].sort().join(' ');
+}
+
+function titleSimilarity(left: string, right: string): number | undefined {
+  const leftTokens = titleTokens(left);
+  const rightTokens = titleTokens(right);
+  if (leftTokens.size === 0 || rightTokens.size === 0) return undefined;
+  let shared = 0;
+  for (const token of leftTokens) if (rightTokens.has(token)) shared += 1;
+  // Sørensen–Dice favors near-title extensions while still requiring both
+  // names to contribute evidence. A shared generic word cannot qualify.
+  if (shared < 2) return undefined;
+  const score = (2 * shared) / (leftTokens.size + rightTokens.size);
+  return score >= 0.75 ? score : undefined;
+}
+
+function featureItems(backup: unknown, feature: keyof FeatureSelection): CanonicalMediaItem[] {
+  if (!object(backup) || !Array.isArray(backup[feature])) return [];
+  return backup[feature].flatMap((record) => object(record) ? [candidateMediaItem(record.item)].filter((item): item is CanonicalMediaItem => item !== undefined) : []);
+}
+
+/**
+ * Advisory pairs from the current dry-run snapshots. They are never automatic
+ * matches: the user must select one, then rerun the preview before writing.
+ */
+export function findIdentityOverrideCandidates(
+  sourceBackup: unknown,
+  targetBackup: unknown,
+  selection: FeatureSelection
+): IdentityOverrideCandidate[] {
+  const features: Array<keyof FeatureSelection> = ['ratings', 'watched', 'watchlist', 'reviews'];
+  const candidates: IdentityOverrideCandidate[] = [];
+  for (const feature of features) {
+    if (!selection[feature]) continue;
+    const possible: IdentityOverrideCandidate[] = [];
+    for (const source of featureItems(sourceBackup, feature)) {
+      for (const target of featureItems(targetBackup, feature)) {
+        // An episode/season title such as "Pilot" is not enough identity
+        // evidence without a verified parent relationship. Leave those pairs
+        // to the explicit editor rather than suggesting a risky shortcut.
+        if (source.kind === 'season' || source.kind === 'episode'
+          || source.kind !== target.kind || mediaItemsMatch(source, target)
+          || normalizedCandidateTitle(source.title) === normalizedCandidateTitle(target.title)
+          // Different explicit years are normally remakes, not alternate
+          // provider names. Do not ask a user to review a likely mismatch.
+          || (source.year !== undefined && target.year !== undefined && source.year !== target.year)) continue;
+        const similarity = titleSimilarity(source.title, target.title);
+        if (similarity === undefined) continue;
+        possible.push({
+          feature,
+          sourceItemId: source.id,
+          targetItemId: target.id,
+          sourceTitle: source.title,
+          targetTitle: target.title,
+          kind: source.kind,
+          similarity: Math.round(similarity * 100),
+          evidence: source.year !== undefined && target.year !== undefined
+            ? `same release year (${source.year})`
+            : 'release year unavailable on one side'
+        });
+      }
+    }
+    // Only show a candidate when it is the unique best pairing for both
+    // records. Ties are deliberately omitted; the structured exact-ID editor
+    // remains available for user-reviewed exceptional cases.
+    for (const candidate of possible) {
+      const sourceTies = possible.filter((other) => other.sourceItemId === candidate.sourceItemId
+        && other.similarity === candidate.similarity);
+      const targetTies = possible.filter((other) => other.targetItemId === candidate.targetItemId
+        && other.similarity === candidate.similarity);
+      if (sourceTies.length !== 1 || targetTies.length !== 1) continue;
+      candidates.push(candidate);
+    }
+  }
+  return candidates.sort((left, right) => right.similarity - left.similarity
+    || left.feature.localeCompare(right.feature)
+    || left.sourceItemId.localeCompare(right.sourceItemId)
+    || left.targetItemId.localeCompare(right.targetItemId)).slice(0, 50);
 }
 
 export function buildAccountSyncRequest(values: AccountSyncFormValues): Record<string, unknown> {
@@ -279,13 +407,17 @@ export function AccountSyncResultDetails({
   error,
   apiKey = '',
   resolutions,
-  onResolve
+  onResolve,
+  selection,
+  onAddIdentityOverride
 }: {
   result: AccountSyncResult;
   error?: string;
   apiKey?: string;
   resolutions?: Readonly<Record<string, 'source' | 'target'>>;
   onResolve?: (id: string, decision: 'source' | 'target' | undefined) => void;
+  selection?: FeatureSelection;
+  onAddIdentityOverride?: (override: AccountIdentityOverride) => void;
 }) {
   const actions = actionList(result.actions);
   const job = object(result.job) ? result.job : undefined;
@@ -298,6 +430,10 @@ export function AccountSyncResultDetails({
     result.conflictDetails ?? job?.conflictDetails,
     result.conflictDetailsTruncated ?? job?.conflictDetailsTruncated
   );
+  const candidateAdder = onAddIdentityOverride;
+  const identityCandidates = selection && candidateAdder
+    ? findIdentityOverrideCandidates(result.sourceBackup, result.targetBackup, selection)
+    : [];
 
   return <div className={error ? 'result-details error-details' : 'result-details success'}>
     <h3>{error ? 'Partial execution details' : 'Account sync result'}</h3>
@@ -317,6 +453,16 @@ export function AccountSyncResultDetails({
     <ConflictReview review={conflictReview} resolutions={resolutions} onResolve={onResolve} />
     <BackupCounts label="Source snapshot" value={result.sourceBackup} />
     <BackupCounts label="Pre-sync target snapshot" value={result.targetBackup} />
+    {identityCandidates.length > 0 && <div className="result-details">
+      <h4>Possible identity mappings</h4>
+      <p>These are unique, year-aware title-similarity suggestions from this preview only. Selecting one adds an exact mapping and requires a fresh dry run; it never creates an automatic match.</p>
+      <ul className="action-results">
+        {identityCandidates.map((candidate) => <li key={candidate.feature + '\u0000' + candidate.sourceItemId + '\u0000' + candidate.targetItemId}>
+          <code>{candidate.feature}</code> · {candidate.sourceTitle} → {candidate.targetTitle} ({candidate.kind}; {candidate.similarity}% title similarity, {candidate.evidence})
+          <button type="button" onClick={() => candidateAdder?.(candidate)}>Use exact pair</button>
+        </li>)}
+      </ul>
+    </div>}
     {savedSourceBackupId && <p>Pre-write source backup: <BackupDownloadButton id={savedSourceBackupId} apiKey={apiKey} label={`download ${savedSourceBackupId}`} /></p>}
     {savedBackupId && <p>Pre-write target backup: <BackupDownloadButton id={savedBackupId} apiKey={apiKey} label={`download ${savedBackupId}`} /></p>}
   </div>;
@@ -335,6 +481,9 @@ export function AccountSyncPanel() {
   const [sourceContextText, setSourceContextText] = useState('');
   const [targetContextText, setTargetContextText] = useState('');
   const [identityOverridesText, setIdentityOverridesText] = useState('');
+  const [identityFeature, setIdentityFeature] = useState<keyof FeatureSelection>('ratings');
+  const [sourceIdentityItemId, setSourceIdentityItemId] = useState('');
+  const [targetIdentityItemId, setTargetIdentityItemId] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>();
@@ -346,6 +495,16 @@ export function AccountSyncPanel() {
   const selectedCount = Number(selection.ratings) + Number(selection.watched) + Number(selection.watchlist)
     + Number(selection.reviews) + Number(selection.following) + Number(selection.followers);
   const sameService = source === target;
+  const identityFeatureOptions = (Object.keys(selection) as Array<keyof FeatureSelection>)
+    .filter((feature) => selection[feature]);
+  const selectedIdentityFeature = selection[identityFeature] ? identityFeature : (identityFeatureOptions[0] ?? 'ratings');
+  let identityOverrides: AccountIdentityOverride[] = [];
+  try {
+    identityOverrides = parseIdentityOverrides(identityOverridesText, selection) ?? [];
+  } catch {
+    // The request builder shows the precise validation error on submit. The
+    // structured editor remains available to replace malformed advanced JSON.
+  }
   const baseSyncSignature = JSON.stringify([
     source, target, selection, conflictPolicy, direction, sourceContextText, targetContextText, identityOverridesText
   ]);
@@ -369,6 +528,67 @@ export function AccountSyncPanel() {
 
   function setFeature(feature: keyof FeatureSelection, checked: boolean) {
     setSelection((current) => ({ ...current, [feature]: checked }));
+  }
+
+  function saveIdentityOverrides(overrides: AccountIdentityOverride[]) {
+    setIdentityOverridesText(overrides.length ? JSON.stringify(overrides, null, 2) : '');
+    setDryRun(true);
+    setConfirmWrite(false);
+  }
+
+  function addIdentityOverride() {
+    try {
+      if (!selection[selectedIdentityFeature]) throw new Error('Select the identity-override feature before adding a mapping.');
+      const candidate: AccountIdentityOverride = {
+        feature: selectedIdentityFeature,
+        sourceItemId: sourceIdentityItemId,
+        targetItemId: targetIdentityItemId
+      };
+      let existing: AccountIdentityOverride[];
+      try {
+        existing = parseIdentityOverrides(identityOverridesText, selection) ?? [];
+      } catch {
+        existing = [];
+      }
+      const next = [...existing, candidate];
+      // Reuse the strict request parser before putting anything into the
+      // editor state, so duplicate, malformed, and unselected pairs cannot
+      // reach a preview.
+      parseIdentityOverrides(JSON.stringify(next), selection);
+      saveIdentityOverrides(next);
+      setSourceIdentityItemId('');
+      setTargetIdentityItemId('');
+      setError(undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Identity override is invalid.');
+    }
+  }
+
+  function addCandidateIdentityOverride(candidate: AccountIdentityOverride) {
+    try {
+      let existing: AccountIdentityOverride[];
+      try {
+        existing = parseIdentityOverrides(identityOverridesText, selection) ?? [];
+      } catch {
+        existing = [];
+      }
+      if (existing.some((override) => override.feature === candidate.feature
+        && override.sourceItemId === candidate.sourceItemId && override.targetItemId === candidate.targetItemId)) {
+        setError(undefined);
+        return;
+      }
+      const next = [...existing, candidate];
+      parseIdentityOverrides(JSON.stringify(next), selection);
+      saveIdentityOverrides(next);
+      setError(undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Identity override is invalid.');
+    }
+  }
+
+  function removeIdentityOverride(index: number) {
+    saveIdentityOverrides(identityOverrides.filter((_override, currentIndex) => currentIndex !== index));
+    setError(undefined);
   }
 
   async function submit() {
@@ -500,9 +720,36 @@ export function AccountSyncPanel() {
         <textarea value={targetContextText} onChange={(event) => setTargetContextText(event.target.value)} rows={10} spellCheck={false} autoComplete="off" placeholder={CONTEXT_EXAMPLES[target] ?? '{\n  "accessToken": "provider-user-token"\n}'} />
       </label>
     </div>
-    <label>Exact identity overrides JSON (advanced, optional)
-      <textarea value={identityOverridesText} onChange={(event) => setIdentityOverridesText(event.target.value)} rows={4} spellCheck={false} placeholder={'[\n  { "feature": "ratings", "sourceItemId": "movie:source-id", "targetItemId": "movie:target-id" }\n]'} />
-    </label>
+    <fieldset>
+      <legend>Exact identity overrides (advanced, optional)</legend>
+      <p className="support-footnote">Add a reviewed source-to-target canonical item pair when normal IDs cannot identify the same media record.</p>
+      <div className="grid">
+        <label>Feature
+          <select value={selectedIdentityFeature} onChange={(event) => setIdentityFeature(event.target.value as keyof FeatureSelection)} disabled={identityFeatureOptions.length === 0}>
+            {identityFeatureOptions.map((feature) => <option key={feature} value={feature}>{feature}</option>)}
+          </select>
+        </label>
+        <label>Source canonical item ID
+          <input value={sourceIdentityItemId} onChange={(event) => setSourceIdentityItemId(event.target.value)} placeholder="movie:source-id" spellCheck={false} />
+        </label>
+        <label>Target canonical item ID
+          <input value={targetIdentityItemId} onChange={(event) => setTargetIdentityItemId(event.target.value)} placeholder="movie:target-id" spellCheck={false} />
+        </label>
+      </div>
+      <button type="button" onClick={addIdentityOverride} disabled={identityFeatureOptions.length === 0}>Add exact mapping</button>
+      {identityOverrides.length > 0 && <ul className="action-results">
+        {identityOverrides.map((override, index) => <li key={override.feature + '\u0000' + override.sourceItemId + '\u0000' + override.targetItemId}>
+          <code>{override.feature}</code>: <code>{override.sourceItemId}</code> → <code>{override.targetItemId}</code>
+          <button type="button" onClick={() => removeIdentityOverride(index)}>Remove</button>
+        </li>)}
+      </ul>}
+      <details>
+        <summary>Advanced JSON editor</summary>
+        <label>Exact identity overrides JSON
+          <textarea value={identityOverridesText} onChange={(event) => setIdentityOverridesText(event.target.value)} rows={4} spellCheck={false} placeholder={'[\n  { "feature": "ratings", "sourceItemId": "movie:source-id", "targetItemId": "movie:target-id" }\n]'} />
+        </label>
+      </details>
+    </fieldset>
     <p className="sensitive-warning">Use only a reviewed, exact source-to-target canonical item pair when normal IDs cannot match it. Overrides apply to this request only, require a selected feature and same media kind, never match social records, and always require a fresh preview before a write.</p>
 
     <div className="checkbox-row">
@@ -520,6 +767,6 @@ export function AccountSyncPanel() {
     </button>
 
     {error && <p className="error" role="alert">{error}</p>}
-    {result && <AccountSyncResultDetails result={result} error={error} apiKey={apiKey} resolutions={conflictResolutions} onResolve={resolveConflict} />}
+    {result && <AccountSyncResultDetails result={result} error={error} apiKey={apiKey} resolutions={conflictResolutions} onResolve={resolveConflict} selection={selection} onAddIdentityOverride={addCandidateIdentityOverride} />}
   </section>;
 }

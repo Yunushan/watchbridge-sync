@@ -36,6 +36,10 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     exportWatched: true,
     readWatchlist: true,
     exportWatchlist: true,
+    readReviews: true,
+    writeReviews: true,
+    importReviews: true,
+    exportReviews: true,
     apiAuth: 'none',
     integrationMode: 'official-export',
     notes: 'Shipped readers accept IMDb ratings, Check-ins, and watchlist exports. Check-ins become timestamp-free watched membership because their list creation time is not guaranteed to be the actual viewing time. The portable ratings CSV helper does not imply IMDb account import or a direct account writer.'
@@ -87,6 +91,27 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     apiAuth: 'api-key',
     integrationMode: 'metadata-only',
     notes: 'Exact IMDb-ID metadata lookup with a caller-provided OMDb API key. No title search, poster API, account, or user-data path is shipped. OMDb content is CC BY-NC 4.0 and its terms limit use to personal, non-commercial purposes.'
+  },
+  watchmode: {
+    ...NONE,
+    readMetadata: true,
+    apiAuth: 'api-key',
+    integrationMode: 'metadata-only',
+    notes: 'Exact IMDb-ID metadata lookup with a caller-provided Watchmode API key. No title-name search, account, user-data, images, caching, or streaming-source display path is shipped. Deployers must independently comply with Watchmode plan, attribution, cache, and personal/non-commercial-use terms.'
+  },
+  movary: {
+    ...NONE,
+    readWatched: true,
+    writeWatched: true,
+    importWatched: true,
+    exportWatched: true,
+    readWatchlist: true,
+    writeWatchlist: true,
+    importWatchlist: true,
+    exportWatchlist: true,
+    apiAuth: 'session-token',
+    integrationMode: 'official-api',
+    notes: 'Pinned Movary OpenAPI history/watchlist endpoints for one owner-selected HTTPS server and user. Movie-only, exact Movary IDs only; no rating-write or title-match claim.'
   },
   wikidata: {
     ...NONE,
@@ -338,9 +363,31 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
   },
   anilist: {
     ...NONE,
-    apiAuth: 'unknown',
-    integrationMode: 'partner-or-request-only',
-    notes: 'No connector is enabled pending explicit authorization for this sustained tracking use case.'
+    readRatings: true,
+    writeRatings: true,
+    importRatings: true,
+    exportRatings: true,
+    readWatched: true,
+    writeWatched: true,
+    importWatched: true,
+    exportWatched: true,
+    readWatchlist: true,
+    writeWatchlist: true,
+    importWatchlist: true,
+    exportWatchlist: true,
+    readReviews: true,
+    writeReviews: true,
+    importReviews: true,
+    exportReviews: true,
+    readFollowing: true,
+    writeFollowing: true,
+    importFollowing: true,
+    exportFollowing: true,
+    readFollowers: true,
+    exportFollowers: true,
+    apiAuth: 'oauth2',
+    integrationMode: 'official-api',
+    notes: 'Official fixed-origin GraphQL media-list, review-export, and social graph support for user-authorized anime/manga lists. Exact AniList media IDs only; following writes resolve exact users, snapshot existing state, and use ToggleFollow only when absent. Review writes are not claimed because the provider requires a separate summary absent from the canonical model.'
   },
   'douban-movie': { ...NONE, readMetadata: true, readRatings: true, exportRatings: true, apiAuth: 'unknown', integrationMode: 'manual', notes: 'Manual/export profile due API availability uncertainty.' },
   kinopoisk: { ...NONE, readMetadata: true, readRatings: true, exportRatings: true, apiAuth: 'unknown', integrationMode: 'manual', notes: 'Manual/export profile due API availability uncertainty.' }

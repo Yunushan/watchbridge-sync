@@ -137,4 +137,4 @@ Use `watchbridge restore-backup backup-id restore-request.json` or `POST /v1/bac
 
 ## AniList anime list to MyAnimeList
 
-This plan is currently blocked. AniList is a selectable but restricted catalog entry, and WatchBridge does not ship AniList OAuth, account reading, or mapped-file execution. No data is fetched or written. The integration can move forward only after the required sustained-integration authorization is obtained and a connector is implemented and tested.
+AniList is a shipped direct-account connector. Provide a caller-obtained AniList OAuth access token and use exact `externalIds.anilist` IDs for anime or manga records. Its media-list connector reads and writes ratings, watched/progress, and planned watchlists; it also reads reviews, followers, and following and can add same-service follows. A cross-service plan to MyAnimeList remains capability- and identity-gated: source records need an exact MyAnimeList ID for the target write, and unsupported list states, timestamps, or lossy review shapes are rejected before mutation.

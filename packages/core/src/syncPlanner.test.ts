@@ -42,7 +42,7 @@ describe('sync planner', () => {
   });
 
   it('blocks metadata-only and restricted entries as user-data sources', () => {
-    for (const source of ['tvmaze', 'anilist'] as const) {
+    for (const source of ['tvmaze'] as const) {
       const ops = planSync({ source, target: 'trakt', dryRun: true, selection: { ratings: true } });
       expect(ops).toEqual([expect.objectContaining({ type: 'blocked', feature: 'ratings' })]);
     }

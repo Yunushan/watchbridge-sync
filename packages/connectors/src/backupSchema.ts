@@ -87,11 +87,11 @@ function nonNegativeInteger(value: unknown, label: string): number | undefined {
 
 function externalIds(value: unknown, label: string): ExternalIds {
   const input = strictRecord(value, label, [
-    'imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist',
+    'imdb', 'watchmode', 'movary', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby', 'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist',
     'douban', 'kinopoisk', 'movielens', 'letterboxdSlug'
   ]);
   const output: ExternalIds = {};
-  for (const key of ['tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'kodi', 'anilist', 'movielens'] as const) {
+  for (const key of ['watchmode', 'movary', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'mal', 'kitsu', 'shikimori', 'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'kodi', 'anilist', 'movielens'] as const) {
     const parsed = positiveInteger(input[key], `${label}.${key}`);
     if (parsed !== undefined) output[key] = parsed;
   }
@@ -275,7 +275,7 @@ function watchlist(value: unknown, label: string): CanonicalWatchlistEntry {
 }
 
 function review(value: unknown, label: string): CanonicalReview {
-  const input = strictRecord(value, label, ['item', 'service', 'body', 'rating', 'spoiler', 'reviewedAt']);
+  const input = strictRecord(value, label, ['item', 'service', 'body', 'summary', 'rating', 'spoiler', 'reviewedAt']);
   const item = mediaItem(input.item, `${label}.item`);
   const reviewService = service(input.service, `${label}.service`);
   const body = requiredString(input.body, `${label}.body`, 100_000);
@@ -296,6 +296,7 @@ function review(value: unknown, label: string): CanonicalReview {
     item,
     service: reviewService,
     body,
+    ...(optionalString(input.summary, `${label}.summary`, 2_000) ? { summary: input.summary as string } : {}),
     ...(attachedRating ? { rating: attachedRating } : {}),
     ...(input.spoiler !== undefined ? { spoiler: input.spoiler } : {}),
     ...(date(input.reviewedAt, `${label}.reviewedAt`) ? { reviewedAt: input.reviewedAt as string } : {})

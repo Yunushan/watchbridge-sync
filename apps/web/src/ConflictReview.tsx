@@ -7,7 +7,7 @@ const FEATURES = new Set(['ratings', 'watched', 'watchlist', 'reviews', 'followi
 const MEDIA_KINDS = new Set<MediaKind>(['movie', 'tv-show', 'season', 'episode', 'anime', 'manga']);
 const SERVICE_IDS = new Set<ServiceId>(SERVICE_DEFINITIONS.map((service) => service.id));
 const ID_PROVIDERS = new Set([
-  'imdb', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
+  'imdb', 'watchmode', 'movary', 'wikidata', 'tmdbMovie', 'tmdbTv', 'tvdb', 'tvmaze', 'trakt', 'simkl', 'mal', 'kitsu', 'shikimori',
   'annictWork', 'annictEpisode', 'bangumi', 'bangumiEpisode', 'jellyfin', 'jellyfinServer', 'emby',
   'embyServer', 'kodi', 'kodiLibrary', 'plex', 'plexServer', 'plexGuid', 'anilist', 'douban', 'kinopoisk',
   'movielens', 'letterboxdSlug'

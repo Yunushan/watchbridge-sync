@@ -70,6 +70,8 @@ export const SERVICE_RUNTIME_SUPPORT = {
     metadata: true
   }),
   omdb: support('metadata-recommendation', { metadata: true }),
+  watchmode: support('metadata-recommendation', { metadata: true }),
+  movary: support('direct-account', { accountReadFeatures: ['watched', 'watchlist'], accountWriteFeatures: ['watched', 'watchlist'] }),
   wikidata: support('metadata-recommendation', { metadata: true }),
   'tv-time': support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   trakt: support('direct-account', {
@@ -128,7 +130,10 @@ export const SERVICE_RUNTIME_SUPPORT = {
     accountReadFeatures: ['ratings', 'watched'],
     accountWriteFeatures: ['ratings', 'watched']
   }),
-  anilist: support('restricted'),
+  anilist: support('direct-account', {
+    accountReadFeatures: ['ratings', 'watched', 'watchlist', 'reviews', 'following', 'followers'],
+    accountWriteFeatures: ['ratings', 'watched', 'watchlist', 'reviews', 'following']
+  }),
   'douban-movie': support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   kinopoisk: support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA })
 } satisfies Readonly<Record<ServiceId, ServiceRuntimeSupport>>;

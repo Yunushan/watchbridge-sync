@@ -6,6 +6,7 @@ import {
   AccountSyncResultDetails,
   buildAccountSyncRequest,
   CONTEXT_EXAMPLES,
+  findIdentityOverrideCandidates,
   MAX_ACCOUNT_SYNC_BYTES,
   parseAccountConnectorContext,
   parseIdentityOverrides,
@@ -69,6 +70,63 @@ describe('AccountSyncPanel input safety', () => {
     expect(() => parseIdentityOverrides('[{"feature":"ratings","sourceItemId":" movie:source","targetItemId":"movie:target"}]', validValues.selection)).toThrow('exact canonical item IDs');
   });
 
+  it('offers only advisory, unambiguous same-kind title pairs that are not automatic matches', () => {
+    const selection = { ratings: true, watched: false, watchlist: false, reviews: false, following: false, followers: false };
+    const candidates = findIdentityOverrideCandidates(
+      {
+        ratings: [
+          { item: { id: 'movie:source', kind: 'movie', title: 'The Matrix Reloaded', year: 2003, externalIds: {} } },
+          { item: { id: 'movie:automatic', kind: 'movie', title: 'Heat', externalIds: {} } }
+        ]
+      },
+      {
+        ratings: [
+          { item: { id: 'movie:target', kind: 'movie', title: 'Matrix Reloaded Extended', year: 2003, externalIds: {} } },
+          { item: { id: 'movie:automatic-target', kind: 'movie', title: 'Heat', externalIds: {} } },
+          { item: { id: 'tv:wrong-kind', kind: 'tv-show', title: 'Matrix Reloaded Extended', externalIds: {} } }
+        ]
+      },
+      selection
+    );
+    expect(candidates).toEqual([expect.objectContaining({
+      feature: 'ratings', sourceItemId: 'movie:source', targetItemId: 'movie:target', kind: 'movie', similarity: 80,
+      evidence: 'same release year (2003)'
+    })]);
+  });
+
+  it('omits different-year, episode, and tied title candidates instead of guessing', () => {
+    const selection = { ratings: true, watched: false, watchlist: false, reviews: false, following: false, followers: false };
+    expect(findIdentityOverrideCandidates(
+      { ratings: [
+        { item: { id: 'movie:remake', kind: 'movie', title: 'Dune Part Two', year: 2024, externalIds: {} } },
+        { item: { id: 'episode:source', kind: 'episode', title: 'The Long Night Returns', seasonNumber: 1, episodeNumber: 1, externalIds: {} } },
+        { item: { id: 'movie:tied', kind: 'movie', title: 'Matrix Reloaded', externalIds: {} } }
+      ] },
+      { ratings: [
+        { item: { id: 'movie:other-year', kind: 'movie', title: 'Dune Part Two Extended', year: 2025, externalIds: {} } },
+        { item: { id: 'episode:target', kind: 'episode', title: 'Long Night Returns Extended', seasonNumber: 1, episodeNumber: 1, externalIds: {} } },
+        { item: { id: 'movie:tied-a', kind: 'movie', title: 'Matrix Reloaded Extended', externalIds: {} } },
+        { item: { id: 'movie:tied-b', kind: 'movie', title: 'Matrix Reloaded Redux', externalIds: {} } }
+      ] },
+      selection
+    )).toEqual([]);
+  });
+
+  it('renders preview-derived candidates only with an explicit exact-pair action', () => {
+    const html = renderToStaticMarkup(<AccountSyncResultDetails
+      result={{
+        sourceBackup: { ratings: [{ item: { id: 'movie:source', kind: 'movie', title: 'The Matrix Reloaded', externalIds: {} } }] },
+        targetBackup: { ratings: [{ item: { id: 'movie:target', kind: 'movie', title: 'Matrix Reloaded Extended', externalIds: {} } }] }
+      }}
+      selection={{ ratings: true, watched: false, watchlist: false, reviews: false, following: false, followers: false }}
+      onAddIdentityOverride={() => undefined}
+    />);
+    expect(html).toContain('Possible identity mappings');
+    expect(html).toContain('Use exact pair');
+    expect(html).toContain('never creates an automatic match');
+    expect(html).toContain('80% title similarity');
+  });
+
   it('requires each connector context to be valid JSON object data', () => {
     expect(parseAccountConnectorContext('{"accessToken":"token"}', 'Source')).toEqual({ accessToken: 'token' });
     expect(() => parseAccountConnectorContext('[]', 'Target')).toThrow('Target connector context must be one JSON object');
@@ -87,7 +145,11 @@ describe('AccountSyncPanel input safety', () => {
     expect(html).toContain('Emby');
     expect(html).toContain('Source connector context JSON');
     expect(html).toContain('Target connector context JSON');
-    expect(html).toContain('Exact identity overrides JSON');
+    expect(html).toContain('Exact identity overrides (advanced, optional)');
+    expect(html).toContain('Source canonical item ID');
+    expect(html).toContain('Target canonical item ID');
+    expect(html).toContain('Add exact mapping');
+    expect(html).toContain('Advanced JSON editor');
     expect(html).toContain('Dry run (required before a matching write)');
     expect(html).toContain('I reviewed the matching preview and confirm this remote account write');
     expect(html).toContain('Run a dry-run preview after the latest');
@@ -100,6 +162,10 @@ describe('AccountSyncPanel input safety', () => {
     expect(JSON.parse(CONTEXT_EXAMPLES.emby ?? '{}')).toEqual({
       accessToken: 'emby-user-token', accountId: 'emby-user-id', baseUrl: 'https://emby.example.test/'
     });
+    expect(JSON.parse(CONTEXT_EXAMPLES.movary ?? '{}')).toEqual({
+      accessToken: 'movary-user-token', accountId: 'movary-username', baseUrl: 'https://movary.example.test/api/'
+    });
+    expect(JSON.parse(CONTEXT_EXAMPLES.anilist ?? '{}')).toEqual({ accessToken: 'anilist-oauth-access-token' });
     expect(JSON.parse(CONTEXT_EXAMPLES.kodi ?? '{}')).toEqual({
       username: 'kodi-user', password: 'kodi-password', profileName: 'Master user',
       kodiLibraryScope: '4b96405c-44f2-4cf7-b0a5-73a9bb14cabc', baseUrl: 'https://kodi.example.test/jsonrpc'

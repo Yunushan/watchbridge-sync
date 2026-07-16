@@ -10,9 +10,9 @@
 - Portable IMDb-shaped ratings CSV helper (not claimed as an IMDb account-import format), plus strict IMDb Ratings, Check-ins, and Watchlist export readers.
 - Web planner, support-percentage, six-provider OAuth, one-way/two-way account-sync, provider-file, backup-sync, additive restore, durable job browsing/detail, authenticated backup-download, manual CSV, Letterboxd export, metadata, and recommendation panels.
 - Tested backup-first one-way and two-way sync execution across all six canonical families, whole-request directional preflight, dry-run reports, bounded redacted conflict details, conflict policies, and durable `pending`/`succeeded`/`failed` job history.
-- Eleven direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, anime-only Shikimori, anime-only Annict, anime-only Bangumi, user-selected Jellyfin and Emby servers, one scoped Kodi library/profile, and one selected Plex Media Server. Strict API/CLI/web IMDb, Letterboxd, and MovieLens file workflows remain separate.
-- TMDb, API-key exact-IMDb-ID OMDb, public exact-Q-item Wikidata, TVmaze, credential-required TheTVDB V4, and public exact-ID Kitsu metadata, plus TasteDive recommendations.
-- State-verified account-authorization API, CLI, and web flows for TMDb, Trakt, Simkl, MyAnimeList, Shikimori, and Annict, including refresh or revocation where the provider supports it. Bangumi uses a separately obtained official token; Jellyfin and Emby use server-issued tokens; Kodi uses request-scoped JSON-RPC Basic credentials; Plex uses a caller-provided account token. None of those other five has a WatchBridge authorization helper.
+- Thirteen direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, anime-only Shikimori, anime-only Annict, anime-only Bangumi, user-selected Jellyfin, Emby, and Movary servers, one scoped Kodi library/profile, one selected Plex Media Server, and AniList. AniList supports exact-ID anime/manga media-list ratings, watched/progress, planned-watchlist operations, reviews, and guarded social reads/additive follows; Movary is movie-only and supports exact-ID watched-history/watchlist operations, not ratings. Strict API/CLI/web IMDb, Letterboxd, and MovieLens file workflows remain separate.
+- TMDb, API-key exact-IMDb-ID OMDb and Watchmode, public exact-Q-item Wikidata, TVmaze, credential-required TheTVDB V4, and public exact-ID Kitsu metadata, plus TasteDive recommendations. Watchmode is exact IMDb-ID metadata only; availability/source display, images, caching, account data, and title-name search remain unshipped.
+- State-verified account-authorization API, CLI, and web flows for TMDb, Trakt, Simkl, MyAnimeList, Shikimori, and Annict, including refresh or revocation where the provider supports it. Bangumi uses a separately obtained official token; Jellyfin and Emby use server-issued tokens; Kodi uses request-scoped JSON-RPC Basic credentials; Plex uses a caller-provided account token; Movary uses a caller-provided API token, username, and explicit HTTPS `/api/` base URL; AniList uses a caller-provided OAuth access token. None of those other seven has a WatchBridge authorization helper.
 - Validated `watchbridge.backup.v1` file-to-account sync through the same backup-first executor.
 - Additive, same-service backup restore through the API, CLI, and web, with a fresh target snapshot before confirmed restore writes.
 - Bounded connector/OAuth timeouts, safe idempotent-read retries, abort handling, and sanitized provider errors.
@@ -34,12 +34,12 @@
 
 - Additional providers' direct social readers or additive same-service following only where official contracts and exact user-identity evidence support them; follower lists remain read-only.
 - Shared filesystem job/backup records now use atomic writes and per-job claims; browser OAuth callbacks, encrypted shared OAuth state, and encrypted connector-context vault references are shipped. A multi-tenant secret-management service, identity-aware authorization, and multi-instance recovery certification are not claimed.
-- Candidate-driven visual identity-match resolution for records that cannot be matched safely. Bounded canonical conflict review, per-record source/target choices for already-matched manual conflicts, explicit exact source-to-target canonical ID overrides, and exact-preview gating before web-confirmed writes are shipped.
+- Candidate quality improvements for records that cannot be matched safely. Bounded canonical conflict review, per-record source/target choices for already-matched manual conflicts, conservative scored title-similarity suggestions (same-kind, same-year when known, and mutually unambiguous) from current dry-run snapshots, a structured exact source-to-target canonical-ID override editor, and exact-preview gating before web-confirmed writes are shipped. Suggestions are advisory only and never alter automatic identity rules.
 - Additional direct connectors or verified target import-file generators only where provider documentation, authorization, and tests support them.
 
 ## Researched platform candidates
 
-These are expansion candidates, not shipped services. They are not part of the current 36-entry catalog or its 216 canonical-family slots, so they do not change the support percentages. A feature is marked **strict** only when the official interface appears to provide authenticated read and write operations for the same canonical meaning; favorites, generic collections, per-file flags, and undocumented endpoints do not count as watchlist/history equivalents. Every candidate still needs authorization, schema fixtures, connector tests, live smoke tests, and a registry change before it may be advertised as supported.
+These are expansion candidates, not shipped services. They are not part of the current 38-entry catalog or its 228 canonical-family slots, so they do not change the support percentages. A feature is marked **strict** only when the official interface appears to provide authenticated read and write operations for the same canonical meaning; favorites, generic collections, per-file flags, and undocumented endpoints do not count as watchlist/history equivalents. Every candidate still needs authorization, schema fixtures, connector tests, live smoke tests, and a registry change before it may be advertised as supported.
 
 | Candidate | Access model | Ratings | Watched/progress | Watchlist | Strict score and next gate | Official references |
 |---|---|---|---|---|---|---|
@@ -51,9 +51,7 @@ These options are better evaluated by workflow fit than by the three primary acc
 
 | Candidate | Best fit | Access model | Priority and next gate | Official references |
 |---|---|---|---|---|
-| Watchmode | Movie/TV metadata plus country-specific streaming availability | API key; exact IMDb/TMDb lookup and proprietary REST API | **High discovery value, terms-gated.** Confirm plan, attribution, cache, image, and commercial-use rights before implementing exact-ID metadata/availability only. It is not evidence of account ratings/history writes. | [API explorer](https://api.watchmode.com/docs/), [Terms](https://api.watchmode.com/tc) |
 | Ryot | User-owned self-hosted media account connector | Owner-controlled server with a GraphQL API | **High portability value.** Pin a supported server/API version, audit authentication and all six family semantics, then apply the same HTTPS custom-origin/network controls as other self-hosted connectors. | [Official repository and GraphQL link](https://github.com/IgnisDa/ryot) |
-| Movary | User-owned self-hosted movie ratings/history | Owner-controlled server with an OpenAPI-backed REST surface | **Promising but version-sensitive.** Audit exact read/write routes and authentication, pin a release, and keep its experimental/breaking-change warning visible. Movie-only semantics must not be promoted to TV/anime support. | [Official documentation](https://docs.movary.org/), [REST API development notes](https://docs.movary.org/development/setup/) |
 | MDBList | Aggregated title scores, lists, and discovery | API key with plan-based daily limits | **Medium metadata priority.** Validate the live OpenAPI schema, source attribution/licensing, cache rules, and exact external-ID behavior before counting any metadata slot. | [API documentation](https://docs.mdblist.com/docs/api) |
 | fanart.tv | Optional artwork enrichment only | API key and media ID lookup | **Separate enrichment track.** Require fixed HTTPS behavior, explicit image rights/attribution/caching rules, and bounded URL validation; artwork is not canonical user-data support. | [API v3 documentation](https://fanart.tv/api-docs/api-v3/) |
 
@@ -68,14 +66,13 @@ These options are better evaluated by workflow fit than by the three primary acc
 
 ## Provider-gated work
 
-- AniList connector only after explicit sustained-integration authorization.
 - Rotten Tomatoes and JustWatch only after an approved partner/API agreement.
 
 ## v1.0 production gate
 
 - Live-provider end-to-end integration tests with authorized non-production accounts.
 - Authorized live-provider backup/restore recovery drills and partial-write reconciliation tests.
-- Candidate-driven visual identity-match resolution for records that are not already canonical matches; the shipped advanced path accepts only user-reviewed exact canonical ID pairs.
+- Live-provider validation of candidate coverage and scoring calibration beyond the shipped conservative title-similarity suggestions from current dry-run snapshots; every accepted mapping remains a user-reviewed exact canonical ID pair.
 - Identity-aware authorization, multi-tenant vault policy, and operational recovery certification before multi-instance deployment.
 - Signed releases.
 - Desktop builds.

@@ -28,8 +28,9 @@ describe('WatchBridge CLI', () => {
     const io = makeIo({});
     await run(['services'], io);
     const services = JSON.parse(io.lines[0]);
-    expect(services).toHaveLength(36);
+    expect(services).toHaveLength(38);
     expect(services).toContainEqual(expect.objectContaining({ id: 'omdb', readiness: 'metadata-only' }));
+    expect(services).toContainEqual(expect.objectContaining({ id: 'watchmode', readiness: 'metadata-only' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'trakt', readiness: 'implemented' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'bangumi', readiness: 'implemented' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'shikimori', readiness: 'implemented' }));
@@ -44,13 +45,13 @@ describe('WatchBridge CLI', () => {
     await run(['support-summary'], io);
     expect(JSON.parse(io.lines[0])).toMatchObject({
       platforms: {
-        selectable: { supported: 36, total: 36, percent: 100, missingPercent: 0 },
-        directAccount: { supported: 11, percent: 30.6, missingPercent: 69.4 },
-        fullThreeFeatureDirect: { supported: 6, percent: 16.7 },
-        allModelFeaturesDirect: { supported: 1, percent: 2.8, missingPercent: 97.2, services: ['trakt'] }
+        selectable: { supported: 38, total: 38, percent: 100, missingPercent: 0 },
+        directAccount: { supported: 13, percent: 34.2, missingPercent: 65.8 },
+        fullThreeFeatureDirect: { supported: 7, percent: 18.4 },
+        allModelFeaturesDirect: { supported: 2, percent: 5.3, missingPercent: 94.7, services: ['trakt', 'anilist'] }
       },
       featureFamilies: { executable: { supported: 6, total: 6, percent: 100, missingPercent: 0 } },
-      featureSlots: { automatedTarget: { supported: 33, total: 216, percent: 15.3, missingPercent: 84.7 } },
+      featureSlots: { automatedTarget: { supported: 40, total: 228, percent: 17.5, missingPercent: 82.5 } },
       directions: { executable: { supported: 2, total: 2, percent: 100, missingPercent: 0 } }
     });
   });

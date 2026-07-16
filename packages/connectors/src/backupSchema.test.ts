@@ -53,6 +53,25 @@ describe('WatchBridge backup schema', () => {
     })).toThrow('externalIds.unknown');
   });
 
+  it('preserves exact Watchmode and Movary identifiers in backup media items', () => {
+    const archive = {
+      ...validBackup(),
+      ratings: [{
+        ...validBackup().ratings[0],
+        item: {
+          ...validBackup().ratings[0].item,
+          externalIds: { watchmode: 12, movary: 34 }
+        }
+      }]
+    };
+
+    expect(parseBackupArchive(archive).ratings?.[0]?.item.externalIds).toEqual({ watchmode: 12, movary: 34 });
+    expect(() => parseBackupArchive({
+      ...archive,
+      ratings: [{ ...archive.ratings[0], item: { ...archive.ratings[0].item, externalIds: { movary: 0 } } }]
+    })).toThrow('externalIds.movary');
+  });
+
   it('rejects malformed media, dates, and out-of-scale ratings', () => {
     const malformed = validBackup();
     malformed.ratings[0].value = 99;
@@ -105,6 +124,7 @@ describe('WatchBridge backup schema', () => {
         item,
         service: 'letterboxd',
         body: 'A precise crime epic.',
+        summary: 'A precise crime epic',
         spoiler: false,
         reviewedAt: '2026-01-02T00:00:00Z',
         rating: attachedRating
@@ -115,6 +135,10 @@ describe('WatchBridge backup schema', () => {
     expect(() => parseBackupArchive({
       ...archive,
       reviews: [{ ...archive.reviews[0], body: '' }]
+    })).toThrow('non-empty string');
+    expect(() => parseBackupArchive({
+      ...archive,
+      reviews: [{ ...archive.reviews[0], summary: '' }]
     })).toThrow('non-empty string');
     expect(() => parseBackupArchive({
       ...archive,
