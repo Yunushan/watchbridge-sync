@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Free/open-source media data export, import, and sync workspace for IMDb, Letterboxd, TMDb, Trakt, Simkl, TV trackers and more.",
-  "license": "MIT",
+  "license": "0BSD",
   "type": "module",
   "scripts": {
     "dev": "corepack pnpm --parallel --filter @watchbridge/api --filter @watchbridge/web dev",

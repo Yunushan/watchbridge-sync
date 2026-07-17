@@ -193,4 +193,4 @@ Siehe [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Lizenz
 
-MIT. Siehe [LICENSE](LICENSE).
+0BSD. Siehe [LICENSE](LICENSE).
