@@ -173,7 +173,7 @@ jobs:
           upload-release-assets: false
       # v3, pinned to an immutable commit.
       - name: Attest release archive provenance
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
         with:
           subject-path: release/*.tar.gz
       # v4, pinned to an immutable commit.
