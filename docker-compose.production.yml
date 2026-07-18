@@ -1,0 +1,61 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      WATCHBRIDGE_API_KEY: ${WATCHBRIDGE_API_KEY:?set a 32-character-or-longer API key in your environment}
+      WATCHBRIDGE_STORAGE_KEY: ${WATCHBRIDGE_STORAGE_KEY:?set a 32-byte storage key in your environment}
+      WATCHBRIDGE_BACKUP_RETENTION_DAYS: ${WATCHBRIDGE_BACKUP_RETENTION_DAYS:-90}
+      WATCHBRIDGE_JOB_RETENTION_DAYS: ${WATCHBRIDGE_JOB_RETENTION_DAYS:-90}
+      WATCHBRIDGE_RATE_LIMIT_PER_MINUTE: ${WATCHBRIDGE_RATE_LIMIT_PER_MINUTE:-120}
+      WATCHBRIDGE_MAX_CONCURRENT_REQUESTS: ${WATCHBRIDGE_MAX_CONCURRENT_REQUESTS:-16}
+      WATCHBRIDGE_MAX_CONCURRENT_SYNCS: ${WATCHBRIDGE_MAX_CONCURRENT_SYNCS:-2}
+      WATCHBRIDGE_SHUTDOWN_TIMEOUT_MS: ${WATCHBRIDGE_SHUTDOWN_TIMEOUT_MS:-25000}
+      WATCHBRIDGE_HEADERS_TIMEOUT_MS: ${WATCHBRIDGE_HEADERS_TIMEOUT_MS:-15000}
+      WATCHBRIDGE_REQUEST_TIMEOUT_MS: ${WATCHBRIDGE_REQUEST_TIMEOUT_MS:-60000}
+      WATCHBRIDGE_KEEP_ALIVE_TIMEOUT_MS: ${WATCHBRIDGE_KEEP_ALIVE_TIMEOUT_MS:-5000}
+      WATCHBRIDGE_ALLOW_CUSTOM_PROVIDER_BASE_URLS: "false"
+    volumes:
+      - watchbridge-data:/data
+    expose:
+      - "8080"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: ${WATCHBRIDGE_API_CPUS:-1.0}
+    mem_limit: ${WATCHBRIDGE_API_MEMORY_LIMIT:-1g}
+    memswap_limit: ${WATCHBRIDGE_API_MEMORY_LIMIT:-1g}
+    pids_limit: 256
+    restart: unless-stopped
+    stop_grace_period: 35s
+
+  web:
+    build:
+      context: .
+      target: web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WATCHBRIDGE_HTTP_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cpus: ${WATCHBRIDGE_WEB_CPUS:-0.5}
+    mem_limit: ${WATCHBRIDGE_WEB_MEMORY_LIMIT:-256m}
+    memswap_limit: ${WATCHBRIDGE_WEB_MEMORY_LIMIT:-256m}
+    pids_limit: 64
+    restart: unless-stopped
+
+volumes:
+  watchbridge-data:

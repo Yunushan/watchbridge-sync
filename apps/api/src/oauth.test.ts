@@ -17,6 +17,7 @@ import {
   refreshShikimoriOAuth,
   refreshTraktOAuth,
   revokeAnnictOAuth,
+  runWithOAuthTenant,
   startAnnictOAuth,
   startMyAnimeListOAuth,
   startShikimoriOAuth,
@@ -671,6 +672,26 @@ describe('OAuth provider request safety', () => {
     expect([first, second].filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect([first, second].filter((result) => result.status === 'rejected')).toHaveLength(1);
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('keeps shared OAuth transaction state in the creating tenant scope', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'watchbridge-oauth-shared-tenants-'));
+    sharedTransactionDirectories.push(directory);
+    process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR = directory;
+    process.env.WATCHBRIDGE_STORAGE_KEY = '01'.repeat(32);
+    const started = runWithOAuthTenant('alice', () => startMyAnimeListOAuth({
+      clientId: 'tenant-mal-client', redirectUri: 'https://app.example/oauth/callback'
+    }));
+    expect(await readdir(directory)).toEqual(['alice']);
+    expect(await readdir(join(directory, 'alice'))).toEqual([`${started.state}.json`]);
+
+    await expect(runWithOAuthTenant('bob', () => exchangeMyAnimeListOAuth(
+      { state: started.state, code: 'bob-code' }, vi.fn()
+    ))).rejects.toThrow('unknown or has already been used');
+
+    await expect(runWithOAuthTenant('alice', () => exchangeMyAnimeListOAuth(
+      { state: started.state, code: 'alice-code' }, vi.fn(async () => Response.json(malToken))
+    ))).resolves.toEqual(malToken);
   });
 
   it('requires encryption whenever shared OAuth transaction storage is configured', async () => {

@@ -12,22 +12,22 @@ importers:
   .:
     devDependencies:
       '@types/node':
-        specifier: latest
+        specifier: 26.1.1
         version: 26.1.1
       prettier:
-        specifier: latest
+        specifier: 3.9.5
         version: 3.9.5
       typescript:
         specifier: 5.7.3
         version: 5.7.3
       vitest:
-        specifier: latest
+        specifier: 4.1.10
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
 
   apps/api:
     dependencies:
       '@hono/node-server':
-        specifier: latest
+        specifier: 2.0.8
         version: 2.0.8(hono@4.12.30)
       '@watchbridge/connectors':
         specifier: workspace:*
@@ -36,48 +36,48 @@ importers:
         specifier: workspace:*
         version: link:../../packages/core
       hono:
-        specifier: latest
+        specifier: 4.12.30
         version: 4.12.30
     devDependencies:
       tsx:
-        specifier: latest
+        specifier: 4.23.1
         version: 4.23.1
       typescript:
         specifier: 5.7.3
         version: 5.7.3
       vitest:
-        specifier: latest
+        specifier: 4.1.10
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
 
   apps/web:
     dependencies:
       '@vitejs/plugin-react':
-        specifier: latest
+        specifier: 6.0.3
         version: 6.0.3(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
       '@watchbridge/core':
         specifier: workspace:*
         version: link:../../packages/core
       react:
-        specifier: latest
+        specifier: 19.2.7
         version: 19.2.7
       react-dom:
-        specifier: latest
+        specifier: 19.2.7
         version: 19.2.7(react@19.2.7)
       typescript:
         specifier: 5.7.3
         version: 5.7.3
       vite:
-        specifier: latest
+        specifier: 8.1.4
         version: 8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1)
     devDependencies:
       '@types/react':
-        specifier: latest
+        specifier: 19.2.17
         version: 19.2.17
       '@types/react-dom':
-        specifier: latest
+        specifier: 19.2.3
         version: 19.2.3(@types/react@19.2.17)
       vitest:
-        specifier: latest
+        specifier: 4.1.10
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
 
   packages/cli:
@@ -93,7 +93,7 @@ importers:
         specifier: 5.7.3
         version: 5.7.3
       vitest:
-        specifier: latest
+        specifier: 4.1.10
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
 
   packages/connectors:
@@ -106,7 +106,7 @@ importers:
         specifier: 5.7.3
         version: 5.7.3
       vitest:
-        specifier: latest
+        specifier: 4.1.10
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
 
   packages/core:
@@ -115,7 +115,7 @@ importers:
         specifier: 5.7.3
         version: 5.7.3
       vitest:
-        specifier: latest
+        specifier: 4.1.10
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
 
 packages:

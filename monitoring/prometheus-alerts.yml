@@ -1,0 +1,47 @@
+groups:
+  - name: watchbridge-api
+    rules:
+      - alert: WatchBridgeApiUnavailable
+        expr: up{job="watchbridge-api"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: WatchBridge API metrics target is unavailable
+          runbook: Confirm /healthz and /readyz, inspect container logs, then check the encrypted data volume and storage key before restarting.
+
+      - alert: WatchBridgeApiHighServerErrorRate
+        expr: sum(rate(watchbridge_http_requests_total{status="5xx"}[5m])) / clamp_min(sum(rate(watchbridge_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: WatchBridge API 5xx rate exceeds 5 percent
+          runbook: Inspect API logs and durable sync-job records; do not retry confirmed provider writes until partial-write evidence is reviewed.
+
+      - alert: WatchBridgeApiHighLatency
+        expr: sum(rate(watchbridge_http_request_duration_seconds[5m])) / clamp_min(sum(rate(watchbridge_http_requests_total[5m])), 0.001) > 2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: WatchBridge API average request latency exceeds 2 seconds
+          runbook: Check provider latency, rate limits, storage I/O, and reverse-proxy saturation before increasing request limits.
+
+      - alert: WatchBridgeSyncExecutionSaturated
+        expr: watchbridge_sync_executions_active >= watchbridge_sync_executions_limit
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: WatchBridge sync execution budget is saturated
+          runbook: Review active sync jobs and provider latency before increasing WATCHBRIDGE_MAX_CONCURRENT_SYNCS; do not retry confirmed writes that may be partial.
+
+      - alert: WatchBridgeApiRequestCapacitySaturated
+        expr: watchbridge_api_requests_active >= watchbridge_api_requests_limit
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: WatchBridge authenticated API request budget is saturated
+          runbook: Review body sizes, active clients, provider latency, and process memory before increasing WATCHBRIDGE_MAX_CONCURRENT_REQUESTS.

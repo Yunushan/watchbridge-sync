@@ -7,6 +7,9 @@
 [![ci](https://github.com/Yunushan/watchbridge-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/Yunushan/watchbridge-sync/actions/workflows/ci.yml)
 ![version](https://img.shields.io/badge/version-0.1.0-0ea5e9)
 ![license](https://img.shields.io/github/license/Yunushan/watchbridge-sync)
+
+Release archive checksum and provenance verification are documented in [Release verification](docs/RELEASES.md).
+Production metrics, Prometheus scraping, and alert rules are documented in [Deployment](docs/DEPLOYMENT.md).
 ![node](https://img.shields.io/badge/node-%3E%3D24-339933?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-%3E%3D9-f69220?logo=pnpm&logoColor=white)
 

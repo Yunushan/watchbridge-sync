@@ -16,7 +16,7 @@ For a multi-instance API, set `WATCHBRIDGE_OAUTH_TRANSACTION_DIR` to a protected
 
 ## Encrypted connector vault
 
-For a protected single-tenant deployment, the web **Encrypted connector vault** panel can store a complete validated direct-account connector context. It requires an explicit checkbox, `WATCHBRIDGE_STORAGE_KEY`, and optionally `WATCHBRIDGE_OAUTH_VAULT_DIR` (otherwise `.watchbridge-oauth-vault`). The API returns only an opaque UUID, never the context. Use exactly `{ "vaultId": "UUID" }` as the source or target context for an account sync; the vault record must belong to that same service and is decrypted only server-side for that request. Delete a record with `DELETE /v1/oauth/vault/:id`.
+For a protected deployment, the web **Encrypted connector vault** panel can store a complete validated direct-account connector context. It requires an explicit checkbox, `WATCHBRIDGE_STORAGE_KEY`, and optionally `WATCHBRIDGE_OAUTH_VAULT_DIR` (otherwise `.watchbridge-oauth-vault`). The API returns only an opaque UUID, never the context. Use exactly `{ "vaultId": "UUID" }` as the source or target context for an account sync; the vault record must belong to that same service and is decrypted only server-side for that request. With named `WATCHBRIDGE_API_KEYS` tenants, records are available only to the tenant that created them. Delete a record with `DELETE /v1/oauth/vault/:id`.
 
 The vault is encrypted at rest but is not a multi-user or delegated secret manager: access follows the same WatchBridge API authorization boundary, records have no automatic retention policy, and account-sync jobs/backups still need separate shared transactional storage before a horizontally scaled deployment.
 
@@ -394,4 +394,4 @@ Official references: [rendered Kitsu OpenAPI](https://hummingbird-me.github.io/a
 - OAuth POSTs are single-attempt. WatchBridge does not automatically retry authorization-code exchanges, refreshes, device requests, or token requests because a timed-out exchange may already have reached the provider. Restart the relevant flow or retry explicitly only after checking provider state.
 - Provider response bodies and native network-error details are suppressed. Public errors contain only the provider, a safe failure category, and an HTTP status when available, so echoed codes, tokens, and secrets are not reflected.
 - Returned tokens are not persisted by the API. Store them in an OS keychain or another encrypted secret store, then pass the access token in the connector's request-scoped context.
-- Production API mode requires `WATCHBRIDGE_API_KEY`, HTTPS should terminate in front of the API, and provider callback URLs must use the exact registered URI.
+- Production API mode requires either `WATCHBRIDGE_API_KEY` or named `WATCHBRIDGE_API_KEYS`, HTTPS should terminate in front of the API, and provider callback URLs must use the exact registered URI.

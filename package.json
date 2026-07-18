@@ -8,16 +8,23 @@
   "scripts": {
     "dev": "corepack pnpm --parallel --filter @watchbridge/api --filter @watchbridge/web dev",
     "build": "corepack pnpm -r --sort build",
-    "test": "corepack pnpm -r test",
-    "lint": "corepack pnpm build && corepack pnpm -r --sort lint",
+    "test": "corepack pnpm -r test && corepack pnpm test:operational",
+    "test:operational": "node --test scripts/live-provider-dry-run.test.mjs scripts/verify-production-recovery-evidence.test.mjs",
+    "check:workflow": "node scripts/check-workflow-hardening.mjs",
+    "check:release-metadata": "node scripts/check-release-metadata.mjs",
+    "check:package-contents": "node scripts/check-package-contents.mjs",
+    "check:web-security-headers": "node scripts/check-web-security-headers.mjs",
+    "check:configuration": "prettier --check .github/**/*.yml monitoring/*.yml docker-compose.production.yml docker-compose.tls.yml",
+    "smoke:production-api": "node scripts/smoke-production-api.mjs",
+    "lint": "corepack pnpm build && corepack pnpm -r --sort lint && corepack pnpm check:workflow && corepack pnpm check:release-metadata && corepack pnpm check:package-contents && corepack pnpm check:web-security-headers && corepack pnpm check:configuration",
     "format": "prettier -w .",
-    "check": "corepack pnpm lint && corepack pnpm test && corepack pnpm build"
+    "check": "corepack pnpm lint && corepack pnpm test && corepack pnpm build && corepack pnpm smoke:production-api"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "prettier": "latest",
-    "typescript": "latest",
-    "vitest": "latest"
+    "@types/node": "26.1.1",
+    "prettier": "3.9.5",
+    "typescript": "5.7.3",
+    "vitest": "4.1.10"
   },
   "engines": {
     "node": ">=24.0.0",

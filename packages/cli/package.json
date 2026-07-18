@@ -1,7 +1,7 @@
 {
   "name": "@watchbridge/cli",
   "version": "0.1.0",
-  "license": "MIT",
+  "license": "0BSD",
   "type": "module",
   "bin": {
     "watchbridge": "dist/index.js"
@@ -16,7 +16,7 @@
     "@watchbridge/connectors": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "latest",
-    "vitest": "latest"
+    "typescript": "5.7.3",
+    "vitest": "4.1.10"
   }
 }

@@ -4,17 +4,271 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v5
-      - uses: actions/setup-node@v5
+      # v5, pinned to an immutable commit; Dependabot keeps this current.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+      # v5, pinned to an immutable commit.
+      - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288
+      # v5, pinned to an immutable commit.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod --audit-level high
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
+      - run: pnpm smoke:production-api
+
+  container-smoke:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WATCHBRIDGE_API_KEY: watchbridge-ci-api-key-000000000
+      WATCHBRIDGE_STORAGE_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+    steps:
+      # v5, pinned to an immutable commit; Dependabot keeps this current.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+      - run: docker compose -f docker-compose.production.yml up --build --detach
+      - name: Tag built production images for vulnerability scanning
+        run: |
+          docker tag "$(docker compose -f docker-compose.production.yml images --quiet api)" watchbridge-api:ci
+          docker tag "$(docker compose -f docker-compose.production.yml images --quiet web)" watchbridge-web:ci
+      # v0.36.0, pinned to an immutable commit.
+      - name: Fail on fixable high or critical API image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: watchbridge-api:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+      # v0.36.0, pinned to an immutable commit.
+      - name: Fail on fixable high or critical web image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: watchbridge-web:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          skip-setup-trivy: true
+      - name: Wait for the same-origin production stack
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/readyz; then
+              curl --fail --silent --show-error http://127.0.0.1:8080/ > /dev/null
+              curl --fail --silent --show-error \
+                --header "Authorization: Bearer $WATCHBRIDGE_API_KEY" \
+                http://127.0.0.1:8080/v1/metrics | grep --quiet '^watchbridge_process_start_time_seconds '
+              curl --fail --silent --show-error \
+                --header "Authorization: Bearer $WATCHBRIDGE_API_KEY" \
+                http://127.0.0.1:8080/v1/metrics | grep --quiet '^watchbridge_api_requests_limit 16$'
+              curl --fail --silent --show-error \
+                --header "Authorization: Bearer $WATCHBRIDGE_API_KEY" \
+                http://127.0.0.1:8080/v1/metrics | grep --quiet '^watchbridge_sync_executions_limit 2$'
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f docker-compose.production.yml ps
+          docker compose -f docker-compose.production.yml logs
+          exit 1
+      - name: Verify the running proxy security contract
+        run: |
+          api_id="$(docker compose -f docker-compose.production.yml ps --quiet api)"
+          web_id="$(docker compose -f docker-compose.production.yml ps --quiet web)"
+          test -n "$api_id"
+          test -n "$web_id"
+          for attempt in {1..15}; do
+            if test "$(docker inspect --format '{{.State.Health.Status}}' "$api_id")" = "healthy" \
+              && test "$(docker inspect --format '{{.State.Health.Status}}' "$web_id")" = "healthy"; then
+              break
+            fi
+            test "$attempt" -lt 15
+            sleep 2
+          done
+          test "$(docker inspect --format '{{.Config.User}}' "$api_id")" = "watchbridge"
+          test "$(docker inspect --format '{{.Config.User}}' "$web_id")" = "nginx"
+          test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$api_id")" = "true"
+          test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$web_id")" = "true"
+          test "$(docker inspect --format '{{.HostConfig.Memory}}' "$api_id")" -gt 0
+          test "$(docker inspect --format '{{.HostConfig.MemorySwap}}' "$api_id")" -gt 0
+          test "$(docker inspect --format '{{.HostConfig.NanoCpus}}' "$api_id")" -gt 0
+          test "$(docker inspect --format '{{.HostConfig.PidsLimit}}' "$api_id")" -gt 0
+          test "$(docker inspect --format '{{.HostConfig.Memory}}' "$web_id")" -gt 0
+          test "$(docker inspect --format '{{.HostConfig.MemorySwap}}' "$web_id")" -gt 0
+          test "$(docker inspect --format '{{.HostConfig.NanoCpus}}' "$web_id")" -gt 0
+          test "$(docker inspect --format '{{.HostConfig.PidsLimit}}' "$web_id")" -gt 0
+          docker compose -f docker-compose.production.yml exec --no-TTY api node --eval "for (const dependency of ['typescript', 'vitest', 'tsx']) { try { require.resolve(dependency); throw new Error('development dependency present: ' + dependency); } catch (error) { if (error instanceof Error && error.message.startsWith('development dependency present:')) throw error; } }"
+          headers="$(curl --silent --show-error --dump-header - --output /dev/null http://127.0.0.1:8080/)"
+          printf '%s\n' "$headers" | grep --quiet '^Content-Security-Policy: default-src'
+          printf '%s\n' "$headers" | grep --quiet '^X-Content-Type-Options: nosniff'
+          printf '%s\n' "$headers" | grep --quiet '^Cross-Origin-Opener-Policy: same-origin'
+          printf '%s\n' "$headers" | grep --quiet '^X-Request-ID: [[:alnum:]]\{32\}'
+          printf '%s\n' "$headers" | grep --quiet '^Cache-Control: no-store'
+          asset_path="$(curl --fail --silent --show-error http://127.0.0.1:8080/ | grep --only-matching --extended-regexp '/assets/[^" ]+\.js' | head --lines 1)"
+          test -n "$asset_path"
+          asset_headers="$(curl --silent --show-error --dump-header - --output /dev/null "http://127.0.0.1:8080$asset_path")"
+          printf '%s\n' "$asset_headers" | grep --quiet '^Cache-Control: public, max-age=31536000, immutable'
+          curl --fail --silent --show-error http://127.0.0.1:8080/.well-known/security.txt | grep --quiet '^Contact: https://github.com/Yunushan/watchbridge-sync/security/advisories/new$'
+      - name: Verify encrypted storage survives an API restart
+        env:
+          API_KEY: ${{ env.WATCHBRIDGE_API_KEY }}
+        run: |
+          vault_id="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data '{"service":"trakt","context":{"accessToken":"ci-recovery-token","apiKey":"ci-recovery-client"},"confirmStore":true}' \
+            http://127.0.0.1:8080/v1/oauth/vault | jq --exit-status --raw-output '.id')"
+          test "$vault_id" != ""
+          docker compose -f docker-compose.production.yml restart api
+          ready=0
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/readyz; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = 1
+          curl --fail --silent --show-error --request DELETE \
+            --header "Authorization: Bearer $API_KEY" \
+            "http://127.0.0.1:8080/v1/oauth/vault/$vault_id" | jq --exit-status --arg id "$vault_id" '.id == $id and .deleted == true'
+      - name: Verify encrypted volume recovery after full stack loss
+        env:
+          API_KEY: ${{ env.WATCHBRIDGE_API_KEY }}
+          RECOVERY_VOLUME: watchbridge-ci-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          api_id="$(docker compose -f docker-compose.production.yml ps --quiet api)"
+          source_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$api_id")"
+          project_label="$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "$source_volume")"
+          volume_label="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' "$source_volume")"
+          test -n "$source_volume"
+          test -n "$project_label"
+          test -n "$volume_label"
+          vault_id="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data '{"service":"trakt","context":{"accessToken":"ci-volume-recovery-token","apiKey":"ci-volume-recovery-client"},"confirmStore":true}' \
+            http://127.0.0.1:8080/v1/oauth/vault | jq --exit-status --raw-output '.id')"
+          test "$vault_id" != ""
+          docker volume create "$RECOVERY_VOLUME"
+          docker run --rm --user root \
+            --volume "$source_volume:/source:ro" \
+            --volume "$RECOVERY_VOLUME:/restore" \
+            watchbridge-api:ci sh -c 'cp -a /source/. /restore/'
+          docker compose -f docker-compose.production.yml down --volumes --remove-orphans
+          docker volume create \
+            --label "com.docker.compose.project=$project_label" \
+            --label "com.docker.compose.volume=$volume_label" \
+            "$source_volume"
+          docker run --rm --user root \
+            --volume "$RECOVERY_VOLUME:/source:ro" \
+            --volume "$source_volume:/restore" \
+            watchbridge-api:ci sh -c 'cp -a /source/. /restore/'
+          docker compose -f docker-compose.production.yml up --no-build --detach
+          ready=0
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/readyz; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = 1
+          curl --fail --silent --show-error --request DELETE \
+            --header "Authorization: Bearer $API_KEY" \
+            "http://127.0.0.1:8080/v1/oauth/vault/$vault_id" | jq --exit-status --arg id "$vault_id" '.id == $id and .deleted == true'
+          docker volume rm "$RECOVERY_VOLUME"
+      - name: Verify the shipped TLS edge profile
+        run: |
+          set -euo pipefail
+          certificate="$RUNNER_TEMP/watchbridge-tls-cert.pem"
+          private_key="$RUNNER_TEMP/watchbridge-tls-key.pem"
+          request_body="$RUNNER_TEMP/watchbridge-tls-body.bin"
+          cleanup() {
+            docker compose -f docker-compose.production.yml -f docker-compose.tls.yml down --volumes --remove-orphans || true
+            rm -f "$certificate" "$private_key" "$request_body"
+          }
+          trap cleanup EXIT
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$private_key" \
+            -out "$certificate" \
+            -days 1 \
+            -subj '/CN=localhost' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+            > /dev/null 2>&1
+          export WATCHBRIDGE_HTTP_PORT=127.0.0.1:18080
+          export WATCHBRIDGE_TLS_HTTP_PORT=18081
+          export WATCHBRIDGE_TLS_HTTPS_PORT=18443
+          export WATCHBRIDGE_TLS_CERTIFICATE_PATH="$certificate"
+          export WATCHBRIDGE_TLS_PRIVATE_KEY_PATH="$private_key"
+          docker compose -f docker-compose.production.yml -f docker-compose.tls.yml up --build --detach
+          edge_id="$(docker compose -f docker-compose.production.yml -f docker-compose.tls.yml ps --quiet edge)"
+          edge_healthy=0
+          for attempt in {1..30}; do
+            if test "$(docker inspect --format '{{.State.Health.Status}}' "$edge_id")" = "healthy"; then
+              edge_healthy=1
+              break
+            fi
+            sleep 2
+          done
+          test "$edge_healthy" = 1
+          https_headers="$(curl --insecure --silent --show-error --dump-header - --output /dev/null https://127.0.0.1:18443/)"
+          printf '%s\n' "$https_headers" | grep --quiet '^HTTP/1.1 200'
+          printf '%s\n' "$https_headers" | grep --quiet '^Strict-Transport-Security: max-age=31536000'
+          printf '%s\n' "$https_headers" | grep --quiet '^Content-Security-Policy: default-src'
+          printf '%s\n' "$https_headers" | grep --quiet '^X-Request-ID: [[:alnum:]]\{32\}'
+          http_headers="$(curl --silent --show-error --dump-header - --output /dev/null http://127.0.0.1:18081/)"
+          printf '%s\n' "$http_headers" | grep --quiet '^HTTP/1.1 308'
+          printf '%s\n' "$http_headers" | grep --quiet '^Location: https://'
+          dd if=/dev/zero of="$request_body" bs=1M count=2 status=none
+          body_status="$(curl --insecure --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $WATCHBRIDGE_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data-binary "@$request_body" \
+            https://127.0.0.1:18443/v1/oauth/vault)"
+          test "$body_status" = 400
+      - name: Write production recovery evidence
+        run: |
+          mkdir -p evidence
+          jq --null-input \
+            --arg schema "watchbridge.production-recovery-evidence.v1" \
+            --arg commit "$GITHUB_SHA" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg generated_at "$(date --utc --iso-8601=seconds)" \
+            '{schema: $schema, commit: $commit, workflow: $workflow, runId: $run_id, runAttempt: $run_attempt, generatedAt: $generated_at, proxySmoke: "passed", encryptedRestartRecovery: "passed", encryptedVolumeRecovery: "passed"}' \
+            > evidence/production-recovery-evidence.json
+          node scripts/verify-production-recovery-evidence.mjs evidence/production-recovery-evidence.json
+      # v4.6.2, pinned to an immutable commit.
+      - name: Retain production recovery evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: production-recovery-evidence-${{ github.run_attempt }}
+          path: evidence/production-recovery-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Remove smoke-test containers and storage
+        if: always()
+        run: |
+          docker compose -f docker-compose.production.yml down --volumes --remove-orphans
+          docker volume rm "watchbridge-ci-recovery-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" || true

@@ -1,0 +1,17 @@
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.git/
+.github/
+.env
+.env.*
+!.env.example
+.watchbridge-backups/
+.watchbridge-jobs/
+.watchbridge-oauth-vault/
+coverage/
+private/
+exports/
+imports/private/
+*.log

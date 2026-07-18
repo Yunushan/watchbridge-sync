@@ -1,0 +1,69 @@
+name: live-provider-dry-run
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: Authorized non-mutating provider drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: live-provider-smoke
+    steps:
+      # v5, pinned to an immutable commit; Dependabot keeps this current.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+      # v5, pinned to an immutable commit.
+      - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288
+      # v5, pinned to an immutable commit.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Run an authorized provider dry-run without writes
+        env:
+          WATCHBRIDGE_LIVE_SYNC_REQUEST: ${{ secrets.WATCHBRIDGE_LIVE_SYNC_REQUEST }}
+        run: |
+          temporary_root="$(mktemp -d)"
+          cleanup() {
+            if test -n "${api_pid:-}"; then kill "$api_pid" 2>/dev/null || true; fi
+            rm -rf "$temporary_root"
+          }
+          trap cleanup EXIT
+          export NODE_ENV=production
+          export WATCHBRIDGE_PORT=18080
+          export WATCHBRIDGE_API_KEY="$(node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('hex'))")"
+          export WATCHBRIDGE_STORAGE_KEY="$(node --input-type=module -e "import { randomBytes } from 'node:crypto'; process.stdout.write(randomBytes(32).toString('hex'))")"
+          export WATCHBRIDGE_BACKUP_DIR="$temporary_root/backups"
+          export WATCHBRIDGE_JOB_DIR="$temporary_root/jobs"
+          export WATCHBRIDGE_OAUTH_VAULT_DIR="$temporary_root/vault"
+          export WATCHBRIDGE_LIVE_API_URL=http://127.0.0.1:18080
+          export WATCHBRIDGE_LIVE_API_KEY="$WATCHBRIDGE_API_KEY"
+          export WATCHBRIDGE_LIVE_EVIDENCE_PATH="$RUNNER_TEMP/watchbridge-live-provider-evidence.json"
+          export WATCHBRIDGE_LIVE_EVIDENCE_COMMIT="$GITHUB_SHA"
+          node apps/api/dist/server.js >"$temporary_root/api.log" 2>&1 &
+          api_pid=$!
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:18080/readyz > /dev/null; then
+              node scripts/live-provider-dry-run.mjs
+              test -s "$WATCHBRIDGE_LIVE_EVIDENCE_PATH"
+              exit 0
+            fi
+            sleep 1
+          done
+          sed -E 's/(Bearer |accessToken|apiKey|clientSecret|refreshToken)[^[:space:]]*/[REDACTED]/g' "$temporary_root/api.log"
+          exit 1
+      # v4.6.2, pinned to an immutable commit.
+      - name: Retain non-secret live-provider evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: live-provider-dry-run-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/watchbridge-live-provider-evidence.json
+          if-no-files-found: error
+          retention-days: 30

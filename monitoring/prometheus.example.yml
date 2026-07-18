@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+rule_files:
+  - prometheus-alerts.yml
+
+scrape_configs:
+  - job_name: watchbridge-api
+    metrics_path: /v1/metrics
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/watchbridge_metrics_api_key
+    static_configs:
+      # Keep this target on a private network. Replace with the API address
+      # visible to Prometheus, not the public Nginx endpoint.
+      - targets: [watchbridge-api.internal:8080]

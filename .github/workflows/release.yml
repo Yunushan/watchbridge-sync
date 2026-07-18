@@ -1,0 +1,190 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build, attest, and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      artifact-metadata: write
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      # v5, pinned to an immutable commit; Dependabot keeps this current.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # v5, pinned to an immutable commit.
+      - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288
+      # v5, pinned to an immutable commit.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Verify release tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "$RELEASE_TAG" = "v$(node --input-type=module -e \"import pkg from './package.json' with { type: 'json' }; process.stdout.write(pkg.version)\")"
+      - run: pnpm audit --prod --audit-level high
+      - run: pnpm check
+      - name: Gate release on the shipped production containers
+        env:
+          WATCHBRIDGE_API_KEY: watchbridge-release-api-key-000000000
+          WATCHBRIDGE_STORAGE_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.production.yml up --build --detach
+          cleanup() {
+            docker compose -f docker-compose.production.yml down --volumes --remove-orphans
+          }
+          trap cleanup EXIT
+          ready=0
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/readyz; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = 1
+          api_id="$(docker compose -f docker-compose.production.yml ps --quiet api)"
+          web_id="$(docker compose -f docker-compose.production.yml ps --quiet web)"
+          healthy=0
+          for attempt in {1..15}; do
+            if test "$(docker inspect --format '{{.State.Health.Status}}' "$api_id")" = "healthy" \
+              && test "$(docker inspect --format '{{.State.Health.Status}}' "$web_id")" = "healthy"; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+          test "$healthy" = 1
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$api_id")" = "healthy"
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$web_id")" = "healthy"
+          test "$(docker inspect --format '{{.Config.User}}' "$api_id")" = "watchbridge"
+          test "$(docker inspect --format '{{.Config.User}}' "$web_id")" = "nginx"
+          test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$api_id")" = "true"
+          test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$web_id")" = "true"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $WATCHBRIDGE_API_KEY" \
+            http://127.0.0.1:8080/v1/metrics | grep --quiet '^watchbridge_api_requests_limit 16$'
+          headers="$(curl --silent --show-error --dump-header - --output /dev/null http://127.0.0.1:8080/)"
+          printf '%s\n' "$headers" | grep --quiet '^Content-Security-Policy: default-src'
+          printf '%s\n' "$headers" | grep --quiet '^Cache-Control: no-store'
+          vault_id="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $WATCHBRIDGE_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data '{"service":"trakt","context":{"accessToken":"release-recovery-token","apiKey":"release-recovery-client"},"confirmStore":true}' \
+            http://127.0.0.1:8080/v1/oauth/vault | jq --exit-status --raw-output '.id')"
+          docker compose -f docker-compose.production.yml restart api
+          ready=0
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/readyz; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = 1
+          curl --fail --silent --show-error --request DELETE \
+            --header "Authorization: Bearer $WATCHBRIDGE_API_KEY" \
+            "http://127.0.0.1:8080/v1/oauth/vault/$vault_id" | jq --exit-status --arg id "$vault_id" '.id == $id and .deleted == true'
+      - name: Gate release on the public TLS edge
+        env:
+          WATCHBRIDGE_API_KEY: watchbridge-release-api-key-000000000
+          WATCHBRIDGE_STORAGE_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+        run: |
+          set -euo pipefail
+          certificate="$RUNNER_TEMP/watchbridge-release-tls-cert.pem"
+          private_key="$RUNNER_TEMP/watchbridge-release-tls-key.pem"
+          request_body="$RUNNER_TEMP/watchbridge-release-tls-body.bin"
+          cleanup() {
+            docker compose -f docker-compose.production.yml -f docker-compose.tls.yml down --volumes --remove-orphans || true
+            rm -f "$certificate" "$private_key" "$request_body"
+          }
+          trap cleanup EXIT
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout "$private_key" \
+            -out "$certificate" \
+            -days 1 \
+            -subj '/CN=localhost' \
+            -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+            > /dev/null 2>&1
+          export WATCHBRIDGE_HTTP_PORT=127.0.0.1:18080
+          export WATCHBRIDGE_TLS_HTTP_PORT=18081
+          export WATCHBRIDGE_TLS_HTTPS_PORT=18443
+          export WATCHBRIDGE_TLS_CERTIFICATE_PATH="$certificate"
+          export WATCHBRIDGE_TLS_PRIVATE_KEY_PATH="$private_key"
+          docker compose -f docker-compose.production.yml -f docker-compose.tls.yml up --build --detach
+          edge_id="$(docker compose -f docker-compose.production.yml -f docker-compose.tls.yml ps --quiet edge)"
+          edge_healthy=0
+          for attempt in {1..30}; do
+            if test "$(docker inspect --format '{{.State.Health.Status}}' "$edge_id")" = "healthy"; then
+              edge_healthy=1
+              break
+            fi
+            sleep 2
+          done
+          test "$edge_healthy" = 1
+          https_headers="$(curl --insecure --silent --show-error --dump-header - --output /dev/null https://127.0.0.1:18443/)"
+          printf '%s\n' "$https_headers" | grep --quiet '^HTTP/1.1 200'
+          printf '%s\n' "$https_headers" | grep --quiet '^Strict-Transport-Security: max-age=31536000'
+          printf '%s\n' "$https_headers" | grep --quiet '^Content-Security-Policy: default-src'
+          http_headers="$(curl --silent --show-error --dump-header - --output /dev/null http://127.0.0.1:18081/)"
+          printf '%s\n' "$http_headers" | grep --quiet '^HTTP/1.1 308'
+          printf '%s\n' "$http_headers" | grep --quiet '^Location: https://'
+          dd if=/dev/zero of="$request_body" bs=1M count=2 status=none
+          body_status="$(curl --insecure --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer $WATCHBRIDGE_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data-binary "@$request_body" \
+            https://127.0.0.1:18443/v1/oauth/vault)"
+          test "$body_status" = 400
+      - name: Create deterministic source archive and checksum
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p release
+          git archive --format=tar --prefix="watchbridge-sync-${RELEASE_TAG}/" "$GITHUB_SHA" | gzip -n > "release/watchbridge-sync-${RELEASE_TAG}-source.tar.gz"
+          sha256sum "release/watchbridge-sync-${RELEASE_TAG}-source.tar.gz" > "release/watchbridge-sync-${RELEASE_TAG}-source.tar.gz.sha256"
+      # v0, pinned to an immutable commit.
+      - name: Generate CycloneDX software bill of materials
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: release/watchbridge-sync-${{ github.ref_name }}-sbom.cdx.json
+          artifact-name: watchbridge-sync-${{ github.ref_name }}-sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      # v3, pinned to an immutable commit.
+      - name: Attest release archive provenance
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: release/*.tar.gz
+      # v4, pinned to an immutable commit.
+      - name: Attest release software bill of materials
+        uses: actions/attest@36051bcae73b7c2a8a6945a48cbf80953c6baa35
+        with:
+          subject-path: release/*.tar.gz
+          sbom-path: release/watchbridge-sync-${{ github.ref_name }}-sbom.cdx.json
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "WatchBridge Sync $RELEASE_TAG"

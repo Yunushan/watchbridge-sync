@@ -1,24 +1,39 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { decodeStoredJson, encodeStoredJson, parseStorageKey } from './storageCrypto.js';
+import { createHash, randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import {
+  decodeStoredJson,
+  encodeStoredJson,
+  parseStorageKey,
+} from "./storageCrypto.js";
 
-const TRAKT_API_URL = 'https://api.trakt.tv';
-const TRAKT_AUTH_URL = 'https://trakt.tv/oauth/authorize';
-const TMDB_API_URL = 'https://api.themoviedb.org';
-const TMDB_AUTH_URL = 'https://www.themoviedb.org/auth/access';
-const MYANIMELIST_AUTH_URL = 'https://myanimelist.net/v1/oauth2';
-const SIMKL_AUTH_URL = 'https://simkl.com/oauth/authorize';
-const SIMKL_TOKEN_URL = 'https://api.simkl.com/oauth/token';
-const SHIKIMORI_AUTH_URL = 'https://shikimori.io/oauth/authorize';
-const SHIKIMORI_TOKEN_URL = 'https://shikimori.io/oauth/token';
-const ANNICT_AUTH_URL = 'https://annict.com/oauth/authorize';
-const ANNICT_API_URL = 'https://api.annict.com';
-const ANNICT_OOB_REDIRECT_URI = 'urn:ietf:wg:oauth:2.0:oob';
+const TRAKT_API_URL = "https://api.trakt.tv";
+const TRAKT_AUTH_URL = "https://trakt.tv/oauth/authorize";
+const TMDB_API_URL = "https://api.themoviedb.org";
+const TMDB_AUTH_URL = "https://www.themoviedb.org/auth/access";
+const MYANIMELIST_AUTH_URL = "https://myanimelist.net/v1/oauth2";
+const SIMKL_AUTH_URL = "https://simkl.com/oauth/authorize";
+const SIMKL_TOKEN_URL = "https://api.simkl.com/oauth/token";
+const SHIKIMORI_AUTH_URL = "https://shikimori.io/oauth/authorize";
+const SHIKIMORI_TOKEN_URL = "https://shikimori.io/oauth/token";
+const ANNICT_AUTH_URL = "https://annict.com/oauth/authorize";
+const ANNICT_API_URL = "https://api.annict.com";
+const ANNICT_OOB_REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob";
 const OAUTH_TRANSACTION_TTL_MS = 10 * 60 * 1000;
 const TMDB_TRANSACTION_TTL_MS = 15 * 60 * 1000;
-const DEFAULT_APP_NAME = 'WatchBridge Sync';
-const DEFAULT_APP_VERSION = '0.1.0';
+const DEFAULT_APP_NAME = "WatchBridge Sync";
+const DEFAULT_APP_VERSION = "0.1.0";
 const DEFAULT_OAUTH_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_OAUTH_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_OAUTH_RESPONSE_BYTES = 64 * 1024;
@@ -41,25 +56,27 @@ export interface OAuthRequestOptions {
   timeoutMs?: number;
 }
 
-export type OAuthProviderErrorCode = 'aborted' | 'http' | 'invalid-response' | 'network' | 'timeout';
+export type OAuthProviderErrorCode =
+  "aborted" | "http" | "invalid-response" | "network" | "timeout";
 
 export class OAuthProviderError extends Error {
   constructor(
     readonly provider: string,
     readonly code: OAuthProviderErrorCode,
-    readonly status?: number
+    readonly status?: number,
   ) {
-    const detail = code === 'timeout'
-      ? 'timed out.'
-      : code === 'aborted'
-        ? 'was aborted.'
-        : code === 'invalid-response'
-          ? 'returned an invalid response.'
-        : code === 'network'
-          ? 'failed before receiving a response.'
-          : `failed (${status ?? 'unknown status'}).`;
+    const detail =
+      code === "timeout"
+        ? "timed out."
+        : code === "aborted"
+          ? "was aborted."
+          : code === "invalid-response"
+            ? "returned an invalid response."
+            : code === "network"
+              ? "failed before receiving a response."
+              : `failed (${status ?? "unknown status"}).`;
     super(`${provider} OAuth request ${detail}`);
-    this.name = 'OAuthProviderError';
+    this.name = "OAuthProviderError";
   }
 }
 
@@ -100,11 +117,11 @@ export interface SimklTokenResponse extends OAuthTokenResponse {
 export interface ShikimoriTokenResponse extends OAuthTokenResponse {
   expires_in: number;
   refresh_token: string;
-  scope: 'user_rates';
+  scope: "user_rates";
 }
 
 export interface AnnictTokenResponse extends OAuthTokenResponse {
-  scope: 'read write';
+  scope: "read write";
   created_at: number;
 }
 
@@ -128,7 +145,8 @@ export interface OAuthAuthorizationStart {
   expiresAt: string;
 }
 
-type OAuthProvider = 'tmdb' | 'trakt' | 'myanimelist' | 'simkl' | 'shikimori' | 'annict';
+type OAuthProvider =
+  "tmdb" | "trakt" | "myanimelist" | "simkl" | "shikimori" | "annict";
 
 interface OAuthTransaction {
   provider: OAuthProvider;
@@ -140,16 +158,46 @@ interface OAuthTransaction {
   appName?: string;
   appVersion?: string;
   userAgent?: string;
+  tenantId?: string;
   expiresAt: number;
 }
 
 const oauthTransactions = new Map<string, OAuthTransaction>();
+const oauthTenantScopes = new AsyncLocalStorage<string | undefined>();
+
+/**
+ * Associates short-lived OAuth state with an authenticated API tenant. The
+ * default scope preserves the standalone OAuth module's single-tenant usage.
+ */
+export function runWithOAuthTenant<T>(
+  tenantId: string | undefined,
+  callback: () => T,
+): T {
+  return oauthTenantScopes.run(tenantId, callback);
+}
+
+function currentOAuthTenant(): string | undefined {
+  return oauthTenantScopes.getStore();
+}
+
+function transactionRecordId(state: string): string {
+  const tenantId = currentOAuthTenant();
+  return tenantId ? `${tenantId}:${state}` : state;
+}
+
+function scopedOAuthTransactionDirectory(directory: string): string {
+  const tenantId = currentOAuthTenant();
+  return tenantId ? join(directory, tenantId) : directory;
+}
 
 function sharedOAuthTransactionDirectory(): string | undefined {
   const directory = process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR;
   if (!directory) return undefined;
   const key = parseStorageKey(process.env.WATCHBRIDGE_STORAGE_KEY);
-  if (!key) throw new OAuthTransactionError('Shared OAuth transaction storage requires WATCHBRIDGE_STORAGE_KEY.');
+  if (!key)
+    throw new OAuthTransactionError(
+      "Shared OAuth transaction storage requires WATCHBRIDGE_STORAGE_KEY.",
+    );
   key.fill(0);
   return directory;
 }
@@ -158,16 +206,62 @@ function transactionFile(directory: string, state: string): string {
   return join(directory, `${state}.json`);
 }
 
-function parseSharedTransaction(stored: string, state: string): OAuthTransaction | undefined {
+function parseSharedTransaction(
+  stored: string,
+  state: string,
+): OAuthTransaction | undefined {
   try {
-    const decoded = decodeStoredJson(stored, 'oauth-transaction', state);
+    const decoded = decodeStoredJson(
+      stored,
+      "oauth-transaction",
+      transactionRecordId(state),
+    );
     const value = JSON.parse(decoded.plaintext) as unknown;
-    if (!isRecord(value) || typeof value.provider !== 'string' || !['tmdb', 'trakt', 'myanimelist', 'simkl', 'shikimori', 'annict'].includes(value.provider)
-      || !isPositiveInteger(value.expiresAt) || value.expiresAt > Date.now() + TMDB_TRANSACTION_TTL_MS) return undefined;
-    const optionalKeys = ['clientId', 'codeVerifier', 'applicationToken', 'requestToken', 'redirectUri', 'appName', 'appVersion', 'userAgent'] as const;
-    if (Object.keys(value).some((key) => key !== 'provider' && key !== 'expiresAt' && !optionalKeys.includes(key as typeof optionalKeys[number]))) return undefined;
-    for (const key of optionalKeys) if (value[key] !== undefined && (typeof value[key] !== 'string' || value[key].length > MAX_TOKEN_LENGTH)) return undefined;
-    return value as unknown as OAuthTransaction;
+    if (
+      !isRecord(value) ||
+      typeof value.provider !== "string" ||
+      ![
+        "tmdb",
+        "trakt",
+        "myanimelist",
+        "simkl",
+        "shikimori",
+        "annict",
+      ].includes(value.provider) ||
+      !isPositiveInteger(value.expiresAt) ||
+      value.expiresAt > Date.now() + TMDB_TRANSACTION_TTL_MS
+    )
+      return undefined;
+    const optionalKeys = [
+      "clientId",
+      "codeVerifier",
+      "applicationToken",
+      "requestToken",
+      "redirectUri",
+      "appName",
+      "appVersion",
+      "userAgent",
+      "tenantId",
+    ] as const;
+    if (
+      Object.keys(value).some(
+        (key) =>
+          key !== "provider" &&
+          key !== "expiresAt" &&
+          !optionalKeys.includes(key as (typeof optionalKeys)[number]),
+      )
+    )
+      return undefined;
+    for (const key of optionalKeys)
+      if (
+        value[key] !== undefined &&
+        (typeof value[key] !== "string" || value[key].length > MAX_TOKEN_LENGTH)
+      )
+        return undefined;
+    const transaction = value as unknown as OAuthTransaction;
+    return transaction.tenantId === currentOAuthTenant()
+      ? transaction
+      : undefined;
   } catch {
     return undefined;
   }
@@ -176,20 +270,27 @@ function parseSharedTransaction(stored: string, state: string): OAuthTransaction
 function pruneSharedOAuthTransactions(directory: string, now: number): number {
   let active = 0;
   for (const name of readdirSync(directory)) {
-    const transactionName = name.endsWith('.json') ? name : undefined;
-    const claimMatch = /^([A-Za-z0-9_-]{43})\.json\.[A-Za-z0-9_-]+\.claim$/.exec(name);
+    const transactionName = name.endsWith(".json") ? name : undefined;
+    const claimMatch =
+      /^([A-Za-z0-9_-]{43})\.json\.[A-Za-z0-9_-]+\.claim$/.exec(name);
     if (!transactionName && !claimMatch) continue;
-    const state = transactionName ? transactionName.slice(0, -5) : claimMatch![1]!;
+    const state = transactionName
+      ? transactionName.slice(0, -5)
+      : claimMatch![1]!;
     if (!/^[A-Za-z0-9_-]{43}$/.test(state)) continue;
     const path = join(directory, name);
     let transaction: OAuthTransaction | undefined;
     try {
-      transaction = parseSharedTransaction(readFileSync(path, 'utf8'), state);
+      transaction = parseSharedTransaction(readFileSync(path, "utf8"), state);
     } catch {
       transaction = undefined;
     }
     if (!transaction || transaction.expiresAt <= now) {
-      try { unlinkSync(path); } catch { /* concurrent consumer/pruner owns the outcome */ }
+      try {
+        unlinkSync(path);
+      } catch {
+        /* concurrent consumer/pruner owns the outcome */
+      }
       continue;
     }
     if (transactionName) active += 1;
@@ -200,28 +301,36 @@ function pruneSharedOAuthTransactions(directory: string, now: number): number {
 export class OAuthInputError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'OAuthInputError';
+    this.name = "OAuthInputError";
   }
 }
 
 export class OAuthTransactionError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'OAuthTransactionError';
+    this.name = "OAuthTransactionError";
   }
 }
 
 export class OAuthCapacityError extends OAuthTransactionError {
   constructor(message: string) {
     super(message);
-    this.name = 'OAuthCapacityError';
+    this.name = "OAuthCapacityError";
   }
 }
 
 export type TraktDevicePollResult =
-  | { status: 'authorized'; token: TraktTokenResponse }
-  | { status: 'too-early'; retryAfter: number }
-  | { status: 'pending' | 'invalid-code' | 'already-used' | 'expired' | 'denied' | 'slow-down' };
+  | { status: "authorized"; token: TraktTokenResponse }
+  | { status: "too-early"; retryAfter: number }
+  | {
+      status:
+        | "pending"
+        | "invalid-code"
+        | "already-used"
+        | "expired"
+        | "denied"
+        | "slow-down";
+    };
 
 interface TraktDeviceSession {
   clientId: string;
@@ -231,7 +340,8 @@ interface TraktDeviceSession {
 }
 
 const traktDeviceSessions = new Map<string, TraktDeviceSession>();
-type TraktTerminalStatus = 'invalid-code' | 'already-used' | 'expired' | 'denied';
+type TraktTerminalStatus =
+  "invalid-code" | "already-used" | "expired" | "denied";
 interface TraktDeviceTerminalState {
   clientId: string;
   expiresAt: number;
@@ -240,27 +350,50 @@ interface TraktDeviceTerminalState {
 const traktDeviceTerminalStates = new Map<string, TraktDeviceTerminalState>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isBoundedString(value: unknown, maximum: number, allowWhitespace: boolean): value is string {
-  return typeof value === 'string'
-    && value.length > 0
-    && value.length <= maximum
-    && !/[\u0000-\u001f\u007f]/.test(value)
-    && (allowWhitespace || !/\s/.test(value));
+function isBoundedString(
+  value: unknown,
+  maximum: number,
+  allowWhitespace: boolean,
+): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maximum &&
+    !/[\u0000-\u001f\u007f]/.test(value) &&
+    (allowWhitespace || !/\s/.test(value))
+  );
 }
 
-function isPositiveInteger(value: unknown, maximum = Number.MAX_SAFE_INTEGER): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= maximum;
+function isPositiveInteger(
+  value: unknown,
+  maximum = Number.MAX_SAFE_INTEGER,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > 0 &&
+    value <= maximum
+  );
 }
 
-function invalidProviderResponse(provider: string, status?: number): OAuthProviderError {
-  return new OAuthProviderError(provider, 'invalid-response', status);
+function invalidProviderResponse(
+  provider: string,
+  status?: number,
+): OAuthProviderError {
+  return new OAuthProviderError(provider, "invalid-response", status);
 }
 
-function requireInputString(provider: string, value: unknown, maximum: number, allowWhitespace = false): string {
-  if (!isBoundedString(value, maximum, allowWhitespace)) throw new OAuthInputError(`${provider} OAuth input is invalid.`);
+function requireInputString(
+  provider: string,
+  value: unknown,
+  maximum: number,
+  allowWhitespace = false,
+): string {
+  if (!isBoundedString(value, maximum, allowWhitespace))
+    throw new OAuthInputError(`${provider} OAuth input is invalid.`);
   return value;
 }
 
@@ -268,7 +401,12 @@ function requireRedirectUri(provider: string, value: string): string {
   requireInputString(provider, value, MAX_REDIRECT_URI_LENGTH, true);
   try {
     const url = new URL(value);
-    if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) throw new Error('invalid');
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.username ||
+      url.password
+    )
+      throw new Error("invalid");
   } catch {
     throw new OAuthInputError(`${provider} OAuth redirect URI is invalid.`);
   }
@@ -276,22 +414,31 @@ function requireRedirectUri(provider: string, value: string): string {
 }
 
 function isLoopbackHostname(hostname: string): boolean {
-  if (hostname === 'localhost' || hostname === '[::1]' || hostname === '::1') return true;
-  const octets = hostname.split('.');
-  return octets.length === 4
-    && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) >= 0 && Number(octet) <= 255)
-    && Number(octets[0]) === 127;
+  if (hostname === "localhost" || hostname === "[::1]" || hostname === "::1")
+    return true;
+  const octets = hostname.split(".");
+  return (
+    octets.length === 4 &&
+    octets.every(
+      (octet) =>
+        /^\d{1,3}$/.test(octet) && Number(octet) >= 0 && Number(octet) <= 255,
+    ) &&
+    Number(octets[0]) === 127
+  );
 }
 
 function requireAnnictRedirectUri(value: string): string {
-  requireInputString('Annict', value, MAX_REDIRECT_URI_LENGTH, true);
+  requireInputString("Annict", value, MAX_REDIRECT_URI_LENGTH, true);
   if (value === ANNICT_OOB_REDIRECT_URI) return value;
   try {
     const url = new URL(value);
-    const allowedProtocol = url.protocol === 'https:' || (url.protocol === 'http:' && isLoopbackHostname(url.hostname));
-    if (!allowedProtocol || url.username || url.password) throw new Error('invalid');
+    const allowedProtocol =
+      url.protocol === "https:" ||
+      (url.protocol === "http:" && isLoopbackHostname(url.hostname));
+    if (!allowedProtocol || url.username || url.password)
+      throw new Error("invalid");
   } catch {
-    throw new OAuthInputError('Annict OAuth redirect URI is invalid.');
+    throw new OAuthInputError("Annict OAuth redirect URI is invalid.");
   }
   return value;
 }
@@ -317,13 +464,19 @@ function traktDeviceStateCount(): number {
 
 function makeRoomForTraktDeviceState(now = Date.now()): void {
   pruneTraktDeviceStates(now);
-  while (traktDeviceStateCount() >= MAX_TRAKT_DEVICE_STATES && traktDeviceTerminalStates.size > 0) {
-    const oldest = traktDeviceTerminalStates.keys().next().value as string | undefined;
+  while (
+    traktDeviceStateCount() >= MAX_TRAKT_DEVICE_STATES &&
+    traktDeviceTerminalStates.size > 0
+  ) {
+    const oldest = traktDeviceTerminalStates.keys().next().value as
+      string | undefined;
     if (!oldest) break;
     traktDeviceTerminalStates.delete(oldest);
   }
   if (traktDeviceStateCount() >= MAX_TRAKT_DEVICE_STATES) {
-    throw new OAuthCapacityError('Too many Trakt device authorization attempts are pending. Try again later.');
+    throw new OAuthCapacityError(
+      "Too many Trakt device authorization attempts are pending. Try again later.",
+    );
   }
 }
 
@@ -331,13 +484,17 @@ function rememberTraktTerminalState(
   deviceCode: string,
   clientId: string,
   status: TraktTerminalStatus,
-  now = Date.now()
+  now = Date.now(),
 ): void {
   const pendingExpiresAt = traktDeviceSessions.get(deviceCode)?.expiresAt;
   traktDeviceSessions.delete(deviceCode);
   pruneTraktDeviceStates(now);
-  while (traktDeviceStateCount() >= MAX_TRAKT_DEVICE_STATES && traktDeviceTerminalStates.size > 0) {
-    const oldest = traktDeviceTerminalStates.keys().next().value as string | undefined;
+  while (
+    traktDeviceStateCount() >= MAX_TRAKT_DEVICE_STATES &&
+    traktDeviceTerminalStates.size > 0
+  ) {
+    const oldest = traktDeviceTerminalStates.keys().next().value as
+      string | undefined;
     if (!oldest) break;
     traktDeviceTerminalStates.delete(oldest);
   }
@@ -345,7 +502,10 @@ function rememberTraktTerminalState(
     traktDeviceTerminalStates.set(deviceCode, {
       clientId,
       status,
-      expiresAt: Math.max(now + TRAKT_TERMINAL_STATE_TTL_MS, pendingExpiresAt ?? 0)
+      expiresAt: Math.max(
+        now + TRAKT_TERMINAL_STATE_TTL_MS,
+        pendingExpiresAt ?? 0,
+      ),
     });
   }
 }
@@ -361,26 +521,30 @@ async function singleAttemptOAuthRequest(
   input: RequestInfo | URL,
   init: RequestInit,
   request: typeof fetch,
-  options: OAuthRequestOptions
+  options: OAuthRequestOptions,
 ): Promise<Response> {
-  if (options.signal?.aborted) throw new OAuthProviderError(provider, 'aborted');
+  if (options.signal?.aborted)
+    throw new OAuthProviderError(provider, "aborted");
 
   const controller = new AbortController();
-  let abortKind: 'aborted' | 'timeout' | undefined;
+  let abortKind: "aborted" | "timeout" | undefined;
   let rejectAbort: ((error: OAuthProviderError) => void) | undefined;
   const abortPromise = new Promise<never>((_resolve, reject) => {
     rejectAbort = reject;
   });
-  const abort = (kind: 'aborted' | 'timeout'): void => {
+  const abort = (kind: "aborted" | "timeout"): void => {
     if (abortKind) return;
     abortKind = kind;
     controller.abort();
     rejectAbort?.(new OAuthProviderError(provider, kind));
   };
-  const onCallerAbort = (): void => abort('aborted');
-  if (options.signal?.aborted) abort('aborted');
-  else options.signal?.addEventListener('abort', onCallerAbort, { once: true });
-  const timeout = setTimeout(() => abort('timeout'), requestTimeoutMs(options.timeoutMs));
+  const onCallerAbort = (): void => abort("aborted");
+  if (options.signal?.aborted) abort("aborted");
+  else options.signal?.addEventListener("abort", onCallerAbort, { once: true });
+  const timeout = setTimeout(
+    () => abort("timeout"),
+    requestTimeoutMs(options.timeoutMs),
+  );
 
   try {
     // OAuth exchanges can be non-idempotent. Invoke the provider exactly once and
@@ -389,12 +553,12 @@ async function singleAttemptOAuthRequest(
       .then(() => request(input, { ...init, signal: controller.signal }))
       .catch(() => {
         if (abortKind) throw new OAuthProviderError(provider, abortKind);
-        throw new OAuthProviderError(provider, 'network');
+        throw new OAuthProviderError(provider, "network");
       });
     return await Promise.race([responsePromise, abortPromise]);
   } finally {
     clearTimeout(timeout);
-    options.signal?.removeEventListener('abort', onCallerAbort);
+    options.signal?.removeEventListener("abort", onCallerAbort);
   }
 }
 
@@ -403,19 +567,25 @@ async function postTraktJson(
   body: Record<string, string>,
   clientId: string,
   request: typeof fetch,
-  options: OAuthRequestOptions
+  options: OAuthRequestOptions,
 ): Promise<Response> {
-  return singleAttemptOAuthRequest('Trakt', url, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'User-Agent': `WatchBridge-Sync/${DEFAULT_APP_VERSION}`,
-      'trakt-api-key': clientId,
-      'trakt-api-version': '2'
+  return singleAttemptOAuthRequest(
+    "Trakt",
+    url,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": `WatchBridge-Sync/${DEFAULT_APP_VERSION}`,
+        "trakt-api-key": clientId,
+        "trakt-api-version": "2",
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body)
-  }, request, options);
+    request,
+    options,
+  );
 }
 
 async function postForm(
@@ -424,199 +594,344 @@ async function postForm(
   request: typeof fetch,
   provider: string,
   options: OAuthRequestOptions,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
 ): Promise<Response> {
-  return singleAttemptOAuthRequest(provider, url, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
-    body: body.toString()
-  }, request, options);
+  return singleAttemptOAuthRequest(
+    provider,
+    url,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        ...headers,
+      },
+      body: body.toString(),
+    },
+    request,
+    options,
+  );
 }
 
 function randomBase64Url(bytes = 48): string {
-  return randomBytes(bytes).toString('base64url');
+  return randomBytes(bytes).toString("base64url");
+}
+
+function syncDirectoryAfterRename(directory: string): void {
+  // POSIX requires syncing the containing directory to make a rename durable
+  // across abrupt power loss. Windows does not allow this directory-open form.
+  if (process.platform === "win32") return;
+  const descriptor = openSync(directory, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function storeTransaction(
   state: string,
   provider: OAuthProvider,
-  transaction: Omit<OAuthTransaction, 'provider' | 'expiresAt'>,
-  ttlMs = OAUTH_TRANSACTION_TTL_MS
+  transaction: Omit<OAuthTransaction, "provider" | "expiresAt">,
+  ttlMs = OAUTH_TRANSACTION_TTL_MS,
 ): { state: string; expiresAt: number } {
   const now = Date.now();
-  const sharedDirectory = sharedOAuthTransactionDirectory();
-  if (sharedDirectory) {
+  const sharedRootDirectory = sharedOAuthTransactionDirectory();
+  if (sharedRootDirectory) {
+    const sharedDirectory =
+      scopedOAuthTransactionDirectory(sharedRootDirectory);
     mkdirSync(sharedDirectory, { recursive: true, mode: 0o700 });
-    if (pruneSharedOAuthTransactions(sharedDirectory, now) >= MAX_PENDING_OAUTH_TRANSACTIONS) {
-      throw new OAuthCapacityError('Too many OAuth authorization attempts are pending. Try again later.');
+    if (
+      pruneSharedOAuthTransactions(sharedDirectory, now) >=
+      MAX_PENDING_OAUTH_TRANSACTIONS
+    ) {
+      throw new OAuthCapacityError(
+        "Too many OAuth authorization attempts are pending. Try again later.",
+      );
     }
     const expiresAt = now + ttlMs;
-    const record: OAuthTransaction = { provider, ...transaction, expiresAt };
+    const tenantId = currentOAuthTenant();
+    const record: OAuthTransaction = {
+      provider,
+      ...transaction,
+      expiresAt,
+      ...(tenantId ? { tenantId } : {}),
+    };
     const finalPath = transactionFile(sharedDirectory, state);
     const temporaryPath = `${finalPath}.${randomBase64Url(12)}.tmp`;
     try {
-      writeFileSync(temporaryPath, encodeStoredJson(JSON.stringify(record), 'oauth-transaction', state), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      const descriptor = openSync(temporaryPath, "wx", 0o600);
+      try {
+        writeFileSync(
+          descriptor,
+          encodeStoredJson(
+            JSON.stringify(record),
+            "oauth-transaction",
+            transactionRecordId(state),
+          ),
+          "utf8",
+        );
+        fsyncSync(descriptor);
+      } finally {
+        closeSync(descriptor);
+      }
       renameSync(temporaryPath, finalPath);
+      syncDirectoryAfterRename(sharedDirectory);
     } catch {
-      try { unlinkSync(temporaryPath); } catch { /* no temporary file remains */ }
-      throw new OAuthTransactionError('Shared OAuth transaction storage is unavailable.');
+      try {
+        unlinkSync(temporaryPath);
+      } catch {
+        /* no temporary file remains */
+      }
+      throw new OAuthTransactionError(
+        "Shared OAuth transaction storage is unavailable.",
+      );
     }
     return { state, expiresAt };
   }
   pruneOAuthTransactions(now);
   if (oauthTransactions.size >= MAX_PENDING_OAUTH_TRANSACTIONS) {
-    throw new OAuthCapacityError('Too many OAuth authorization attempts are pending. Try again later.');
+    throw new OAuthCapacityError(
+      "Too many OAuth authorization attempts are pending. Try again later.",
+    );
   }
   const expiresAt = now + ttlMs;
-  oauthTransactions.set(state, { provider, ...transaction, expiresAt });
+  const tenantId = currentOAuthTenant();
+  oauthTransactions.set(state, {
+    provider,
+    ...transaction,
+    expiresAt,
+    ...(tenantId ? { tenantId } : {}),
+  });
   return { state, expiresAt };
 }
 
-function createTransaction(provider: OAuthProvider, transaction: Omit<OAuthTransaction, 'provider' | 'expiresAt'>): { state: string; expiresAt: number } {
+function createTransaction(
+  provider: OAuthProvider,
+  transaction: Omit<OAuthTransaction, "provider" | "expiresAt">,
+): { state: string; expiresAt: number } {
   return storeTransaction(randomBase64Url(32), provider, transaction);
 }
 
-function consumeTransaction(provider: OAuthProvider, state: string): OAuthTransaction {
+function consumeTransaction(
+  provider: OAuthProvider,
+  state: string,
+): OAuthTransaction {
   if (!isBoundedString(state, 128, false)) {
-    throw new OAuthTransactionError('The OAuth state is unknown or has already been used. Start authorization again.');
+    throw new OAuthTransactionError(
+      "The OAuth state is unknown or has already been used. Start authorization again.",
+    );
   }
-  const sharedDirectory = sharedOAuthTransactionDirectory();
-  if (sharedDirectory) {
+  const sharedRootDirectory = sharedOAuthTransactionDirectory();
+  if (sharedRootDirectory) {
+    const sharedDirectory =
+      scopedOAuthTransactionDirectory(sharedRootDirectory);
     const finalPath = transactionFile(sharedDirectory, state);
     const claimPath = `${finalPath}.${randomBase64Url(12)}.claim`;
     try {
       renameSync(finalPath, claimPath);
     } catch {
-      throw new OAuthTransactionError('The OAuth state is unknown or has already been used. Start authorization again.');
+      throw new OAuthTransactionError(
+        "The OAuth state is unknown or has already been used. Start authorization again.",
+      );
     }
     let transaction: OAuthTransaction | undefined;
     try {
-      transaction = parseSharedTransaction(readFileSync(claimPath, 'utf8'), state);
+      transaction = parseSharedTransaction(
+        readFileSync(claimPath, "utf8"),
+        state,
+      );
     } catch {
       transaction = undefined;
     } finally {
-      try { unlinkSync(claimPath); } catch { /* the claimed record must never be reused */ }
+      try {
+        unlinkSync(claimPath);
+      } catch {
+        /* the claimed record must never be reused */
+      }
     }
     if (!transaction || transaction.provider !== provider) {
-      throw new OAuthTransactionError('The OAuth state is unknown or has already been used. Start authorization again.');
+      throw new OAuthTransactionError(
+        "The OAuth state is unknown or has already been used. Start authorization again.",
+      );
     }
     if (transaction.expiresAt <= Date.now()) {
-      throw new OAuthTransactionError('The OAuth authorization attempt expired. Start authorization again.');
+      throw new OAuthTransactionError(
+        "The OAuth authorization attempt expired. Start authorization again.",
+      );
     }
     return transaction;
   }
   const transaction = oauthTransactions.get(state);
-  if (!transaction || transaction.provider !== provider) {
+  if (
+    !transaction ||
+    transaction.provider !== provider ||
+    transaction.tenantId !== currentOAuthTenant()
+  ) {
     pruneOAuthTransactions();
-    throw new OAuthTransactionError('The OAuth state is unknown or has already been used. Start authorization again.');
+    throw new OAuthTransactionError(
+      "The OAuth state is unknown or has already been used. Start authorization again.",
+    );
   }
   if (transaction.expiresAt <= Date.now()) {
     oauthTransactions.delete(state);
-    throw new OAuthTransactionError('The OAuth authorization attempt expired. Start authorization again.');
+    throw new OAuthTransactionError(
+      "The OAuth authorization attempt expired. Start authorization again.",
+    );
   }
   oauthTransactions.delete(state);
   pruneOAuthTransactions();
   return transaction;
 }
 
-function validateTokenResponse(value: unknown, provider: string): OAuthTokenResponse {
-  if (!isRecord(value)
-    || !isBoundedString(value.access_token, MAX_TOKEN_LENGTH, false)
-    || !isBoundedString(value.token_type, 64, false)
-    || value.token_type.toLowerCase() !== 'bearer'
-    || (value.expires_in !== undefined && !isPositiveInteger(value.expires_in, MAX_TOKEN_LIFETIME_SECONDS))
-    || (value.refresh_token !== undefined && !isBoundedString(value.refresh_token, MAX_TOKEN_LENGTH, false))
-    || (value.scope !== undefined && !isBoundedString(value.scope, MAX_SCOPE_LENGTH, true))
-    || (value.created_at !== undefined && !isPositiveInteger(value.created_at))) {
+function validateTokenResponse(
+  value: unknown,
+  provider: string,
+): OAuthTokenResponse {
+  if (
+    !isRecord(value) ||
+    !isBoundedString(value.access_token, MAX_TOKEN_LENGTH, false) ||
+    !isBoundedString(value.token_type, 64, false) ||
+    value.token_type.toLowerCase() !== "bearer" ||
+    (value.expires_in !== undefined &&
+      !isPositiveInteger(value.expires_in, MAX_TOKEN_LIFETIME_SECONDS)) ||
+    (value.refresh_token !== undefined &&
+      !isBoundedString(value.refresh_token, MAX_TOKEN_LENGTH, false)) ||
+    (value.scope !== undefined &&
+      !isBoundedString(value.scope, MAX_SCOPE_LENGTH, true)) ||
+    (value.created_at !== undefined && !isPositiveInteger(value.created_at))
+  ) {
     throw invalidProviderResponse(provider);
   }
   return {
     access_token: value.access_token,
     token_type: value.token_type,
     ...(value.expires_in !== undefined ? { expires_in: value.expires_in } : {}),
-    ...(value.refresh_token !== undefined ? { refresh_token: value.refresh_token } : {}),
+    ...(value.refresh_token !== undefined
+      ? { refresh_token: value.refresh_token }
+      : {}),
     ...(value.scope !== undefined ? { scope: value.scope } : {}),
-    ...(value.created_at !== undefined ? { created_at: value.created_at } : {})
+    ...(value.created_at !== undefined ? { created_at: value.created_at } : {}),
   };
 }
 
 function validateTraktTokenResponse(value: unknown): TraktTokenResponse {
-  const token = validateTokenResponse(value, 'Trakt') as Partial<TraktTokenResponse>;
+  const token = validateTokenResponse(
+    value,
+    "Trakt",
+  ) as Partial<TraktTokenResponse>;
   if (
-    !isPositiveInteger(token.expires_in, MAX_TOKEN_LIFETIME_SECONDS)
-    || !isBoundedString(token.refresh_token, MAX_TOKEN_LENGTH, false)
-    || !isBoundedString(token.scope, MAX_SCOPE_LENGTH, true)
-    || !isPositiveInteger(token.created_at)
+    !isPositiveInteger(token.expires_in, MAX_TOKEN_LIFETIME_SECONDS) ||
+    !isBoundedString(token.refresh_token, MAX_TOKEN_LENGTH, false) ||
+    !isBoundedString(token.scope, MAX_SCOPE_LENGTH, true) ||
+    !isPositiveInteger(token.created_at)
   ) {
-    throw invalidProviderResponse('Trakt');
+    throw invalidProviderResponse("Trakt");
   }
   return token as TraktTokenResponse;
 }
 
-function validateMyAnimeListTokenResponse(value: unknown): MyAnimeListTokenResponse {
-  const token = validateTokenResponse(value, 'MyAnimeList') as Partial<MyAnimeListTokenResponse>;
-  if (!isPositiveInteger(token.expires_in, MAX_TOKEN_LIFETIME_SECONDS) || !isBoundedString(token.refresh_token, MAX_TOKEN_LENGTH, false)) {
-    throw invalidProviderResponse('MyAnimeList');
+function validateMyAnimeListTokenResponse(
+  value: unknown,
+): MyAnimeListTokenResponse {
+  const token = validateTokenResponse(
+    value,
+    "MyAnimeList",
+  ) as Partial<MyAnimeListTokenResponse>;
+  if (
+    !isPositiveInteger(token.expires_in, MAX_TOKEN_LIFETIME_SECONDS) ||
+    !isBoundedString(token.refresh_token, MAX_TOKEN_LENGTH, false)
+  ) {
+    throw invalidProviderResponse("MyAnimeList");
   }
   return token as MyAnimeListTokenResponse;
 }
 
 function validateSimklTokenResponse(value: unknown): SimklTokenResponse {
-  const token = validateTokenResponse(value, 'Simkl') as Partial<SimklTokenResponse>;
-  if (!isPositiveInteger(token.expires_in, MAX_TOKEN_LIFETIME_SECONDS) || !isBoundedString(token.scope, MAX_SCOPE_LENGTH, true)) {
-    throw invalidProviderResponse('Simkl');
+  const token = validateTokenResponse(
+    value,
+    "Simkl",
+  ) as Partial<SimklTokenResponse>;
+  if (
+    !isPositiveInteger(token.expires_in, MAX_TOKEN_LIFETIME_SECONDS) ||
+    !isBoundedString(token.scope, MAX_SCOPE_LENGTH, true)
+  ) {
+    throw invalidProviderResponse("Simkl");
   }
   return token as SimklTokenResponse;
 }
 
-function validateShikimoriTokenResponse(value: unknown): ShikimoriTokenResponse {
-  const token = validateTokenResponse(value, 'Shikimori') as Partial<ShikimoriTokenResponse>;
+function validateShikimoriTokenResponse(
+  value: unknown,
+): ShikimoriTokenResponse {
+  const token = validateTokenResponse(
+    value,
+    "Shikimori",
+  ) as Partial<ShikimoriTokenResponse>;
   if (
-    !isPositiveInteger(token.expires_in, MAX_TOKEN_LIFETIME_SECONDS)
-    || !isBoundedString(token.refresh_token, MAX_TOKEN_LENGTH, false)
-    || token.scope !== 'user_rates'
+    !isPositiveInteger(token.expires_in, MAX_TOKEN_LIFETIME_SECONDS) ||
+    !isBoundedString(token.refresh_token, MAX_TOKEN_LENGTH, false) ||
+    token.scope !== "user_rates"
   ) {
-    throw invalidProviderResponse('Shikimori');
+    throw invalidProviderResponse("Shikimori");
   }
   return token as ShikimoriTokenResponse;
 }
 
 function validateAnnictTokenResponse(value: unknown): AnnictTokenResponse {
-  const token = validateTokenResponse(value, 'Annict') as Partial<AnnictTokenResponse>;
-  if (token.scope !== 'read write' || !isPositiveInteger(token.created_at)) {
-    throw invalidProviderResponse('Annict');
+  const token = validateTokenResponse(
+    value,
+    "Annict",
+  ) as Partial<AnnictTokenResponse>;
+  if (token.scope !== "read write" || !isPositiveInteger(token.created_at)) {
+    throw invalidProviderResponse("Annict");
   }
   return token as AnnictTokenResponse;
 }
 
 function validateTmdbUserTokenResponse(value: unknown): TmdbUserTokenResponse {
-  if (!isRecord(value)
-    || value.success !== true
-    || !isBoundedString(value.access_token, MAX_TOKEN_LENGTH, false)
-    || !isBoundedString(value.account_id, MAX_IDENTIFIER_LENGTH, false)
-    || (value.status_code !== undefined && !isPositiveInteger(value.status_code))
-    || (value.status_message !== undefined && !isBoundedString(value.status_message, 1024, true))) {
-    throw invalidProviderResponse('TMDb');
+  if (
+    !isRecord(value) ||
+    value.success !== true ||
+    !isBoundedString(value.access_token, MAX_TOKEN_LENGTH, false) ||
+    !isBoundedString(value.account_id, MAX_IDENTIFIER_LENGTH, false) ||
+    (value.status_code !== undefined &&
+      !isPositiveInteger(value.status_code)) ||
+    (value.status_message !== undefined &&
+      !isBoundedString(value.status_message, 1024, true))
+  ) {
+    throw invalidProviderResponse("TMDb");
   }
   return {
     success: true,
     access_token: value.access_token,
     account_id: value.account_id,
-    ...(value.status_code !== undefined ? { status_code: value.status_code } : {}),
-    ...(value.status_message !== undefined ? { status_message: value.status_message } : {})
+    ...(value.status_code !== undefined
+      ? { status_code: value.status_code }
+      : {}),
+    ...(value.status_message !== undefined
+      ? { status_message: value.status_message }
+      : {}),
   };
 }
 
 function providerError(provider: string, response: Response): Error {
   // Provider bodies can echo authorization codes, refresh tokens, or client
   // secrets. Status is sufficient for diagnostics and safe to expose.
-  return new OAuthProviderError(provider, 'http', response.status);
+  return new OAuthProviderError(provider, "http", response.status);
 }
 
-async function providerJson(provider: string, response: Response, options: OAuthRequestOptions = {}): Promise<unknown> {
-  const declaredLength = response.headers.get('content-length');
+async function providerJson(
+  provider: string,
+  response: Response,
+  options: OAuthRequestOptions = {},
+): Promise<unknown> {
+  const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
-    if (!/^\d+$/.test(declaredLength) || Number(declaredLength) > MAX_OAUTH_RESPONSE_BYTES) {
+    if (
+      !/^\d+$/.test(declaredLength) ||
+      Number(declaredLength) > MAX_OAUTH_RESPONSE_BYTES
+    ) {
       throw invalidProviderResponse(provider, response.status);
     }
   }
@@ -635,20 +950,24 @@ async function providerJson(provider: string, response: Response, options: OAuth
   const abortPromise = new Promise<never>((_resolve, reject) => {
     rejectAbort = reject;
   });
-  const abort = (code: 'aborted' | 'timeout'): void => {
+  const abort = (code: "aborted" | "timeout"): void => {
     if (abortError) return;
     abortError = new OAuthProviderError(provider, code);
     void reader.cancel().catch(() => undefined);
     rejectAbort?.(abortError);
   };
-  const onCallerAbort = (): void => abort('aborted');
-  options.signal?.addEventListener('abort', onCallerAbort, { once: true });
-  const timeout = setTimeout(() => abort('timeout'), requestTimeoutMs(options.timeoutMs));
+  const onCallerAbort = (): void => abort("aborted");
+  options.signal?.addEventListener("abort", onCallerAbort, { once: true });
+  const timeout = setTimeout(
+    () => abort("timeout"),
+    requestTimeoutMs(options.timeoutMs),
+  );
   const readBody = async (): Promise<unknown> => {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (!(value instanceof Uint8Array)) throw invalidProviderResponse(provider, response.status);
+      if (!(value instanceof Uint8Array))
+        throw invalidProviderResponse(provider, response.status);
       total += value.byteLength;
       if (total > MAX_OAUTH_RESPONSE_BYTES) {
         await reader.cancel().catch(() => undefined);
@@ -663,7 +982,7 @@ async function providerJson(provider: string, response: Response, options: OAuth
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     return JSON.parse(text) as unknown;
   };
   try {
@@ -674,13 +993,17 @@ async function providerJson(provider: string, response: Response, options: OAuth
     return result;
   } catch (error) {
     if (abortError) throw abortError;
-    if (error instanceof OAuthProviderError && (error.code === 'aborted' || error.code === 'timeout')) throw error;
+    if (
+      error instanceof OAuthProviderError &&
+      (error.code === "aborted" || error.code === "timeout")
+    )
+      throw error;
     // JSON parse and body-stream errors can include response fragments. Never
     // propagate those native messages because a provider may have echoed secrets.
     throw invalidProviderResponse(provider, response.status);
   } finally {
     clearTimeout(timeout);
-    options.signal?.removeEventListener('abort', onCallerAbort);
+    options.signal?.removeEventListener("abort", onCallerAbort);
     try {
       reader.releaseLock();
     } catch {
@@ -691,169 +1014,250 @@ async function providerJson(provider: string, response: Response, options: OAuth
 
 function tmdbHeaders(bearer: string): Record<string, string> {
   return {
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
+    Accept: "application/json",
+    "Content-Type": "application/json",
     Authorization: `Bearer ${bearer}`,
-    'User-Agent': `WatchBridge-Sync/${DEFAULT_APP_VERSION}`
+    "User-Agent": `WatchBridge-Sync/${DEFAULT_APP_VERSION}`,
   };
 }
 
 async function tmdbJson(
   path: string,
-  method: 'POST' | 'DELETE',
+  method: "POST" | "DELETE",
   bearer: string,
   body: Record<string, string>,
   request: typeof fetch,
-  options: OAuthRequestOptions
+  options: OAuthRequestOptions,
 ): Promise<Response> {
-  return singleAttemptOAuthRequest('TMDb', `${TMDB_API_URL}${path}`, {
-    method,
-    headers: tmdbHeaders(bearer),
-    body: JSON.stringify(body)
-  }, request, options);
+  return singleAttemptOAuthRequest(
+    "TMDb",
+    `${TMDB_API_URL}${path}`,
+    {
+      method,
+      headers: tmdbHeaders(bearer),
+      body: JSON.stringify(body),
+    },
+    request,
+    options,
+  );
 }
 
 export async function startTmdbOAuth(
   input: { applicationToken: string; redirectUri: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<OAuthAuthorizationStart> {
-  requireInputString('TMDb', input.applicationToken, MAX_TOKEN_LENGTH, false);
-  requireRedirectUri('TMDb', input.redirectUri);
+  requireInputString("TMDb", input.applicationToken, MAX_TOKEN_LENGTH, false);
+  requireRedirectUri("TMDb", input.redirectUri);
   const state = randomBase64Url(32);
   const redirect = new URL(input.redirectUri);
-  redirect.searchParams.set('state', state);
-  const response = await tmdbJson('/4/auth/request_token', 'POST', input.applicationToken, { redirect_to: redirect.toString() }, request, options);
-  if (!response.ok) throw providerError('TMDb', response);
-  const value = await providerJson('TMDb', response, options);
-  if (!isRecord(value) || value.success !== true || !isBoundedString(value.request_token, MAX_TOKEN_LENGTH, false)) {
-    throw invalidProviderResponse('TMDb', response.status);
+  redirect.searchParams.set("state", state);
+  const response = await tmdbJson(
+    "/4/auth/request_token",
+    "POST",
+    input.applicationToken,
+    { redirect_to: redirect.toString() },
+    request,
+    options,
+  );
+  if (!response.ok) throw providerError("TMDb", response);
+  const value = await providerJson("TMDb", response, options);
+  if (
+    !isRecord(value) ||
+    value.success !== true ||
+    !isBoundedString(value.request_token, MAX_TOKEN_LENGTH, false)
+  ) {
+    throw invalidProviderResponse("TMDb", response.status);
   }
-  const { expiresAt } = storeTransaction(state, 'tmdb', {
-    applicationToken: input.applicationToken,
-    requestToken: value.request_token
-  }, TMDB_TRANSACTION_TTL_MS);
+  const { expiresAt } = storeTransaction(
+    state,
+    "tmdb",
+    {
+      applicationToken: input.applicationToken,
+      requestToken: value.request_token,
+    },
+    TMDB_TRANSACTION_TTL_MS,
+  );
   const authorization = new URL(TMDB_AUTH_URL);
-  authorization.searchParams.set('request_token', value.request_token);
-  return { authorizationUrl: authorization.toString(), state, expiresAt: new Date(expiresAt).toISOString() };
+  authorization.searchParams.set("request_token", value.request_token);
+  return {
+    authorizationUrl: authorization.toString(),
+    state,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
 }
 
 export async function exchangeTmdbOAuth(
   input: { state: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<TmdbUserTokenResponse> {
-  const transaction = consumeTransaction('tmdb', input.state);
+  const transaction = consumeTransaction("tmdb", input.state);
   if (!transaction.applicationToken || !transaction.requestToken) {
-    throw new OAuthTransactionError('The TMDb authorization transaction is incomplete. Start authorization again.');
+    throw new OAuthTransactionError(
+      "The TMDb authorization transaction is incomplete. Start authorization again.",
+    );
   }
-  const response = await tmdbJson('/4/auth/access_token', 'POST', transaction.applicationToken, {
-    request_token: transaction.requestToken
-  }, request, options);
-  if (!response.ok) throw providerError('TMDb', response);
-  return validateTmdbUserTokenResponse(await providerJson('TMDb', response, options));
+  const response = await tmdbJson(
+    "/4/auth/access_token",
+    "POST",
+    transaction.applicationToken,
+    {
+      request_token: transaction.requestToken,
+    },
+    request,
+    options,
+  );
+  if (!response.ok) throw providerError("TMDb", response);
+  return validateTmdbUserTokenResponse(
+    await providerJson("TMDb", response, options),
+  );
 }
 
 export async function createTmdbV3Session(
   input: { applicationToken: string; userAccessToken: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<TmdbV3SessionResponse> {
-  requireInputString('TMDb', input.applicationToken, MAX_TOKEN_LENGTH, false);
-  requireInputString('TMDb', input.userAccessToken, MAX_TOKEN_LENGTH, false);
-  const converted = await tmdbJson('/3/authentication/session/convert/4', 'POST', input.applicationToken, {
-    access_token: input.userAccessToken
-  }, request, options);
-  if (!converted.ok) throw providerError('TMDb', converted);
-  const session = await providerJson('TMDb', converted, options);
-  if (!isRecord(session) || session.success !== true || !isBoundedString(session.session_id, MAX_TOKEN_LENGTH, false)) {
-    throw invalidProviderResponse('TMDb', converted.status);
+  requireInputString("TMDb", input.applicationToken, MAX_TOKEN_LENGTH, false);
+  requireInputString("TMDb", input.userAccessToken, MAX_TOKEN_LENGTH, false);
+  const converted = await tmdbJson(
+    "/3/authentication/session/convert/4",
+    "POST",
+    input.applicationToken,
+    {
+      access_token: input.userAccessToken,
+    },
+    request,
+    options,
+  );
+  if (!converted.ok) throw providerError("TMDb", converted);
+  const session = await providerJson("TMDb", converted, options);
+  if (
+    !isRecord(session) ||
+    session.success !== true ||
+    !isBoundedString(session.session_id, MAX_TOKEN_LENGTH, false)
+  ) {
+    throw invalidProviderResponse("TMDb", converted.status);
   }
 
   const accountUrl = new URL(`${TMDB_API_URL}/3/account`);
-  accountUrl.searchParams.set('session_id', session.session_id);
+  accountUrl.searchParams.set("session_id", session.session_id);
   const accountResponse = await singleAttemptOAuthRequest(
-    'TMDb',
+    "TMDb",
     accountUrl,
     { headers: tmdbHeaders(input.applicationToken) },
     request,
-    options
+    options,
   );
-  if (!accountResponse.ok) throw providerError('TMDb', accountResponse);
-  const account = await providerJson('TMDb', accountResponse, options);
+  if (!accountResponse.ok) throw providerError("TMDb", accountResponse);
+  const account = await providerJson("TMDb", accountResponse, options);
   if (!isRecord(account) || !isPositiveInteger(account.id)) {
-    throw invalidProviderResponse('TMDb', accountResponse.status);
+    throw invalidProviderResponse("TMDb", accountResponse.status);
   }
-  return { success: true, session_id: session.session_id, numeric_account_id: account.id };
+  return {
+    success: true,
+    session_id: session.session_id,
+    numeric_account_id: account.id,
+  };
 }
 
 export async function logoutTmdbOAuth(
   userAccessToken: string,
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<{ success: true; status_code?: number; status_message?: string }> {
-  requireInputString('TMDb', userAccessToken, MAX_TOKEN_LENGTH, false);
-  const response = await tmdbJson('/4/auth/access_token', 'DELETE', userAccessToken, { access_token: userAccessToken }, request, options);
-  if (!response.ok) throw providerError('TMDb', response);
-  const result = await providerJson('TMDb', response, options);
-  if (!isRecord(result)
-    || result.success !== true
-    || (result.status_code !== undefined && !isPositiveInteger(result.status_code))
-    || (result.status_message !== undefined && !isBoundedString(result.status_message, 1024, true))) {
-    throw invalidProviderResponse('TMDb', response.status);
+  requireInputString("TMDb", userAccessToken, MAX_TOKEN_LENGTH, false);
+  const response = await tmdbJson(
+    "/4/auth/access_token",
+    "DELETE",
+    userAccessToken,
+    { access_token: userAccessToken },
+    request,
+    options,
+  );
+  if (!response.ok) throw providerError("TMDb", response);
+  const result = await providerJson("TMDb", response, options);
+  if (
+    !isRecord(result) ||
+    result.success !== true ||
+    (result.status_code !== undefined &&
+      !isPositiveInteger(result.status_code)) ||
+    (result.status_message !== undefined &&
+      !isBoundedString(result.status_message, 1024, true))
+  ) {
+    throw invalidProviderResponse("TMDb", response.status);
   }
   return {
     success: true,
-    ...(result.status_code !== undefined ? { status_code: result.status_code } : {}),
-    ...(result.status_message !== undefined ? { status_message: result.status_message } : {})
+    ...(result.status_code !== undefined
+      ? { status_code: result.status_code }
+      : {}),
+    ...(result.status_message !== undefined
+      ? { status_message: result.status_message }
+      : {}),
   };
 }
 
 export async function startTraktDeviceOAuth(
   clientId: string,
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<TraktDeviceCode> {
-  requireInputString('Trakt', clientId, MAX_IDENTIFIER_LENGTH, false);
-  const response = await postTraktJson(`${TRAKT_API_URL}/oauth/device/code`, { client_id: clientId }, clientId, request, options);
-  if (!response.ok) throw providerError('Trakt', response);
-  const code = await providerJson('Trakt', response, options);
+  requireInputString("Trakt", clientId, MAX_IDENTIFIER_LENGTH, false);
+  const response = await postTraktJson(
+    `${TRAKT_API_URL}/oauth/device/code`,
+    { client_id: clientId },
+    clientId,
+    request,
+    options,
+  );
+  if (!response.ok) throw providerError("Trakt", response);
+  const code = await providerJson("Trakt", response, options);
   if (
-    !isRecord(code)
-    || !isBoundedString(code.device_code, MAX_IDENTIFIER_LENGTH, false)
-    || !isBoundedString(code.user_code, 128, false)
-    || !isBoundedString(code.verification_url, MAX_REDIRECT_URI_LENGTH, true)
-    || !isPositiveInteger(code.expires_in, MAX_DEVICE_LIFETIME_SECONDS)
-    || !isPositiveInteger(code.interval, MAX_DEVICE_INTERVAL_SECONDS)
+    !isRecord(code) ||
+    !isBoundedString(code.device_code, MAX_IDENTIFIER_LENGTH, false) ||
+    !isBoundedString(code.user_code, 128, false) ||
+    !isBoundedString(code.verification_url, MAX_REDIRECT_URI_LENGTH, true) ||
+    !isPositiveInteger(code.expires_in, MAX_DEVICE_LIFETIME_SECONDS) ||
+    !isPositiveInteger(code.interval, MAX_DEVICE_INTERVAL_SECONDS)
   ) {
-    throw invalidProviderResponse('Trakt', response.status);
+    throw invalidProviderResponse("Trakt", response.status);
   }
   try {
     const verification = new URL(code.verification_url);
-    if (verification.protocol !== 'https:' || verification.origin !== 'https://trakt.tv' || verification.username || verification.password) {
-      throw new Error('invalid');
+    if (
+      verification.protocol !== "https:" ||
+      verification.origin !== "https://trakt.tv" ||
+      verification.username ||
+      verification.password
+    ) {
+      throw new Error("invalid");
     }
   } catch {
-    throw invalidProviderResponse('Trakt', response.status);
+    throw invalidProviderResponse("Trakt", response.status);
   }
   const deviceCode: TraktDeviceCode = {
     device_code: code.device_code,
     user_code: code.user_code,
     verification_url: code.verification_url,
     expires_in: code.expires_in,
-    interval: code.interval
+    interval: code.interval,
   };
   const now = Date.now();
   pruneTraktDeviceStates(now);
-  if (traktDeviceSessions.has(deviceCode.device_code) || traktDeviceTerminalStates.has(deviceCode.device_code)) {
-    throw invalidProviderResponse('Trakt', response.status);
+  if (
+    traktDeviceSessions.has(deviceCode.device_code) ||
+    traktDeviceTerminalStates.has(deviceCode.device_code)
+  ) {
+    throw invalidProviderResponse("Trakt", response.status);
   }
   makeRoomForTraktDeviceState(now);
   traktDeviceSessions.set(deviceCode.device_code, {
     clientId,
     expiresAt: now + deviceCode.expires_in * 1000,
     nextPollAt: now + deviceCode.interval * 1000,
-    intervalMs: deviceCode.interval * 1000
+    intervalMs: deviceCode.interval * 1000,
   });
   return deviceCode;
 }
@@ -861,31 +1265,41 @@ export async function startTraktDeviceOAuth(
 export async function pollTraktDeviceOAuth(
   input: { clientId: string; clientSecret: string; deviceCode: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<TraktDevicePollResult> {
-  requireInputString('Trakt', input.clientId, MAX_IDENTIFIER_LENGTH, false);
-  requireInputString('Trakt', input.clientSecret, MAX_TOKEN_LENGTH, true);
-  requireInputString('Trakt', input.deviceCode, MAX_IDENTIFIER_LENGTH, false);
+  requireInputString("Trakt", input.clientId, MAX_IDENTIFIER_LENGTH, false);
+  requireInputString("Trakt", input.clientSecret, MAX_TOKEN_LENGTH, true);
+  requireInputString("Trakt", input.deviceCode, MAX_IDENTIFIER_LENGTH, false);
   const now = Date.now();
   const existingSession = traktDeviceSessions.get(input.deviceCode);
   if (existingSession) {
-    if (existingSession.clientId !== input.clientId) return { status: 'invalid-code' };
+    if (existingSession.clientId !== input.clientId)
+      return { status: "invalid-code" };
     if (existingSession.expiresAt <= now) {
-      rememberTraktTerminalState(input.deviceCode, input.clientId, 'expired', now);
-      return { status: 'expired' };
+      rememberTraktTerminalState(
+        input.deviceCode,
+        input.clientId,
+        "expired",
+        now,
+      );
+      return { status: "expired" };
     }
   }
   pruneTraktDeviceStates(now);
   const terminal = traktDeviceTerminalStates.get(input.deviceCode);
   if (terminal) {
-    if (terminal.clientId !== input.clientId) return { status: 'invalid-code' };
+    if (terminal.clientId !== input.clientId) return { status: "invalid-code" };
     return { status: terminal.status };
   }
 
   let session = traktDeviceSessions.get(input.deviceCode);
   if (session) {
-    if (session.clientId !== input.clientId) return { status: 'invalid-code' };
-    if (session.nextPollAt > now) return { status: 'too-early', retryAfter: Math.ceil((session.nextPollAt - now) / 1000) };
+    if (session.clientId !== input.clientId) return { status: "invalid-code" };
+    if (session.nextPollAt > now)
+      return {
+        status: "too-early",
+        retryAfter: Math.ceil((session.nextPollAt - now) / 1000),
+      };
     session.nextPollAt = now + session.intervalMs;
   } else {
     makeRoomForTraktDeviceState(now);
@@ -895,157 +1309,284 @@ export async function pollTraktDeviceOAuth(
       clientId: input.clientId,
       expiresAt: now + EXTERNAL_TRAKT_DEVICE_TTL_MS,
       nextPollAt: now + DEFAULT_TRAKT_DEVICE_INTERVAL_MS,
-      intervalMs: DEFAULT_TRAKT_DEVICE_INTERVAL_MS
+      intervalMs: DEFAULT_TRAKT_DEVICE_INTERVAL_MS,
     };
     traktDeviceSessions.set(input.deviceCode, session);
   }
-  const response = await postTraktJson(`${TRAKT_API_URL}/oauth/device/token`, {
-    code: input.deviceCode,
-    client_id: input.clientId,
-    client_secret: input.clientSecret
-  }, input.clientId, request, options);
-  const statusByCode: Record<number, 'pending' | 'invalid-code' | 'already-used' | 'expired' | 'denied' | 'slow-down'> = {
-    400: 'pending', 404: 'invalid-code', 409: 'already-used', 410: 'expired', 418: 'denied', 429: 'slow-down'
+  const response = await postTraktJson(
+    `${TRAKT_API_URL}/oauth/device/token`,
+    {
+      code: input.deviceCode,
+      client_id: input.clientId,
+      client_secret: input.clientSecret,
+    },
+    input.clientId,
+    request,
+    options,
+  );
+  const statusByCode: Record<
+    number,
+    | "pending"
+    | "invalid-code"
+    | "already-used"
+    | "expired"
+    | "denied"
+    | "slow-down"
+  > = {
+    400: "pending",
+    404: "invalid-code",
+    409: "already-used",
+    410: "expired",
+    418: "denied",
+    429: "slow-down",
   };
   if (!response.ok) {
     const status = statusByCode[response.status];
     if (status) {
-      if (status === 'slow-down' && session) {
+      if (status === "slow-down" && session) {
         session.intervalMs = Math.min(session.intervalMs * 2, 60_000);
         session.nextPollAt = now + session.intervalMs;
       }
-      if (status === 'invalid-code' || status === 'already-used' || status === 'expired' || status === 'denied') {
-        rememberTraktTerminalState(input.deviceCode, input.clientId, status, now);
+      if (
+        status === "invalid-code" ||
+        status === "already-used" ||
+        status === "expired" ||
+        status === "denied"
+      ) {
+        rememberTraktTerminalState(
+          input.deviceCode,
+          input.clientId,
+          status,
+          now,
+        );
       }
       return { status };
     }
-    throw providerError('Trakt', response);
+    throw providerError("Trakt", response);
   }
   // A successful OAuth response consumes the device code even when its body is
   // malformed. Tombstone it before parsing so a retry cannot redeem it twice.
-  rememberTraktTerminalState(input.deviceCode, input.clientId, 'already-used', now);
-  return { status: 'authorized', token: validateTraktTokenResponse(await providerJson('Trakt', response, options)) };
+  rememberTraktTerminalState(
+    input.deviceCode,
+    input.clientId,
+    "already-used",
+    now,
+  );
+  return {
+    status: "authorized",
+    token: validateTraktTokenResponse(
+      await providerJson("Trakt", response, options),
+    ),
+  };
 }
 
-export function startTraktOAuth(input: { clientId: string; redirectUri: string; signup?: boolean; prompt?: 'login' }): OAuthAuthorizationStart {
-  requireInputString('Trakt', input.clientId, MAX_IDENTIFIER_LENGTH, false);
-  requireRedirectUri('Trakt', input.redirectUri);
-  const { state, expiresAt } = createTransaction('trakt', {
+export function startTraktOAuth(input: {
+  clientId: string;
+  redirectUri: string;
+  signup?: boolean;
+  prompt?: "login";
+}): OAuthAuthorizationStart {
+  requireInputString("Trakt", input.clientId, MAX_IDENTIFIER_LENGTH, false);
+  requireRedirectUri("Trakt", input.redirectUri);
+  const { state, expiresAt } = createTransaction("trakt", {
     clientId: input.clientId,
-    redirectUri: input.redirectUri
+    redirectUri: input.redirectUri,
   });
   const url = new URL(TRAKT_AUTH_URL);
   url.search = new URLSearchParams({
-    response_type: 'code',
+    response_type: "code",
     client_id: input.clientId,
     redirect_uri: input.redirectUri,
     state,
-    ...(input.signup ? { signup: 'true' } : {}),
-    ...(input.prompt ? { prompt: input.prompt } : {})
+    ...(input.signup ? { signup: "true" } : {}),
+    ...(input.prompt ? { prompt: input.prompt } : {}),
   }).toString();
-  return { authorizationUrl: url.toString(), state, expiresAt: new Date(expiresAt).toISOString() };
+  return {
+    authorizationUrl: url.toString(),
+    state,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
 }
 
 export async function exchangeTraktOAuth(
   input: { state: string; code: string; clientSecret: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<TraktTokenResponse> {
-  const transaction = consumeTransaction('trakt', input.state);
-  requireInputString('Trakt', input.code, MAX_IDENTIFIER_LENGTH, false);
-  requireInputString('Trakt', input.clientSecret, MAX_TOKEN_LENGTH, true);
-  if (!transaction.clientId) throw new OAuthTransactionError('The Trakt OAuth transaction is incomplete. Start authorization again.');
-  const response = await postTraktJson(`${TRAKT_API_URL}/oauth/token`, {
-    code: input.code,
-    client_id: transaction.clientId,
-    client_secret: input.clientSecret,
-    redirect_uri: transaction.redirectUri ?? '',
-    grant_type: 'authorization_code'
-  }, transaction.clientId, request, options);
-  if (!response.ok) throw providerError('Trakt', response);
-  return validateTraktTokenResponse(await providerJson('Trakt', response, options));
+  const transaction = consumeTransaction("trakt", input.state);
+  requireInputString("Trakt", input.code, MAX_IDENTIFIER_LENGTH, false);
+  requireInputString("Trakt", input.clientSecret, MAX_TOKEN_LENGTH, true);
+  if (!transaction.clientId)
+    throw new OAuthTransactionError(
+      "The Trakt OAuth transaction is incomplete. Start authorization again.",
+    );
+  const response = await postTraktJson(
+    `${TRAKT_API_URL}/oauth/token`,
+    {
+      code: input.code,
+      client_id: transaction.clientId,
+      client_secret: input.clientSecret,
+      redirect_uri: transaction.redirectUri ?? "",
+      grant_type: "authorization_code",
+    },
+    transaction.clientId,
+    request,
+    options,
+  );
+  if (!response.ok) throw providerError("Trakt", response);
+  return validateTraktTokenResponse(
+    await providerJson("Trakt", response, options),
+  );
 }
 
 export async function refreshTraktOAuth(
-  input: { clientId: string; clientSecret: string; redirectUri: string; refreshToken: string },
+  input: {
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    refreshToken: string;
+  },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<TraktTokenResponse> {
-  requireInputString('Trakt', input.clientId, MAX_IDENTIFIER_LENGTH, false);
-  requireInputString('Trakt', input.clientSecret, MAX_TOKEN_LENGTH, true);
-  requireRedirectUri('Trakt', input.redirectUri);
-  requireInputString('Trakt', input.refreshToken, MAX_TOKEN_LENGTH, false);
-  const response = await postTraktJson(`${TRAKT_API_URL}/oauth/token`, {
-    refresh_token: input.refreshToken,
-    client_id: input.clientId,
-    client_secret: input.clientSecret,
-    redirect_uri: input.redirectUri,
-    grant_type: 'refresh_token'
-  }, input.clientId, request, options);
-  if (!response.ok) throw providerError('Trakt', response);
-  return validateTraktTokenResponse(await providerJson('Trakt', response, options));
+  requireInputString("Trakt", input.clientId, MAX_IDENTIFIER_LENGTH, false);
+  requireInputString("Trakt", input.clientSecret, MAX_TOKEN_LENGTH, true);
+  requireRedirectUri("Trakt", input.redirectUri);
+  requireInputString("Trakt", input.refreshToken, MAX_TOKEN_LENGTH, false);
+  const response = await postTraktJson(
+    `${TRAKT_API_URL}/oauth/token`,
+    {
+      refresh_token: input.refreshToken,
+      client_id: input.clientId,
+      client_secret: input.clientSecret,
+      redirect_uri: input.redirectUri,
+      grant_type: "refresh_token",
+    },
+    input.clientId,
+    request,
+    options,
+  );
+  if (!response.ok) throw providerError("Trakt", response);
+  return validateTraktTokenResponse(
+    await providerJson("Trakt", response, options),
+  );
 }
 
-export function startMyAnimeListOAuth(input: { clientId: string; redirectUri?: string }): OAuthAuthorizationStart {
-  requireInputString('MyAnimeList', input.clientId, MAX_IDENTIFIER_LENGTH, false);
-  if (input.redirectUri) requireRedirectUri('MyAnimeList', input.redirectUri);
+export function startMyAnimeListOAuth(input: {
+  clientId: string;
+  redirectUri?: string;
+}): OAuthAuthorizationStart {
+  requireInputString(
+    "MyAnimeList",
+    input.clientId,
+    MAX_IDENTIFIER_LENGTH,
+    false,
+  );
+  if (input.redirectUri) requireRedirectUri("MyAnimeList", input.redirectUri);
   const codeVerifier = randomBase64Url();
-  const { state, expiresAt } = createTransaction('myanimelist', {
+  const { state, expiresAt } = createTransaction("myanimelist", {
     clientId: input.clientId,
     codeVerifier,
-    ...(input.redirectUri ? { redirectUri: input.redirectUri } : {})
+    ...(input.redirectUri ? { redirectUri: input.redirectUri } : {}),
   });
   const url = new URL(`${MYANIMELIST_AUTH_URL}/authorize`);
   url.search = new URLSearchParams({
-    response_type: 'code',
+    response_type: "code",
     client_id: input.clientId,
     code_challenge: codeVerifier,
-    code_challenge_method: 'plain',
+    code_challenge_method: "plain",
     state,
-    ...(input.redirectUri ? { redirect_uri: input.redirectUri } : {})
+    ...(input.redirectUri ? { redirect_uri: input.redirectUri } : {}),
   }).toString();
-  return { authorizationUrl: url.toString(), state, expiresAt: new Date(expiresAt).toISOString() };
+  return {
+    authorizationUrl: url.toString(),
+    state,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
 }
 
 export async function exchangeMyAnimeListOAuth(
   input: { state: string; code: string; clientSecret?: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<MyAnimeListTokenResponse> {
-  const transaction = consumeTransaction('myanimelist', input.state);
-  requireInputString('MyAnimeList', input.code, MAX_IDENTIFIER_LENGTH, false);
-  if (input.clientSecret) requireInputString('MyAnimeList', input.clientSecret, MAX_TOKEN_LENGTH, true);
-  if (!transaction.clientId || !transaction.codeVerifier) throw new OAuthTransactionError('The MyAnimeList OAuth transaction is incomplete. Start authorization again.');
+  const transaction = consumeTransaction("myanimelist", input.state);
+  requireInputString("MyAnimeList", input.code, MAX_IDENTIFIER_LENGTH, false);
+  if (input.clientSecret)
+    requireInputString(
+      "MyAnimeList",
+      input.clientSecret,
+      MAX_TOKEN_LENGTH,
+      true,
+    );
+  if (!transaction.clientId || !transaction.codeVerifier)
+    throw new OAuthTransactionError(
+      "The MyAnimeList OAuth transaction is incomplete. Start authorization again.",
+    );
   const body = new URLSearchParams({
-    grant_type: 'authorization_code',
+    grant_type: "authorization_code",
     client_id: transaction.clientId,
     code: input.code,
     code_verifier: transaction.codeVerifier,
     ...(input.clientSecret ? { client_secret: input.clientSecret } : {}),
-    ...(transaction.redirectUri ? { redirect_uri: transaction.redirectUri } : {})
+    ...(transaction.redirectUri
+      ? { redirect_uri: transaction.redirectUri }
+      : {}),
   });
-  const response = await postForm(`${MYANIMELIST_AUTH_URL}/token`, body, request, 'MyAnimeList', options);
-  if (!response.ok) throw providerError('MyAnimeList', response);
-  return validateMyAnimeListTokenResponse(await providerJson('MyAnimeList', response, options));
+  const response = await postForm(
+    `${MYANIMELIST_AUTH_URL}/token`,
+    body,
+    request,
+    "MyAnimeList",
+    options,
+  );
+  if (!response.ok) throw providerError("MyAnimeList", response);
+  return validateMyAnimeListTokenResponse(
+    await providerJson("MyAnimeList", response, options),
+  );
 }
 
 export async function refreshMyAnimeListOAuth(
   input: { clientId: string; refreshToken: string; clientSecret?: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<MyAnimeListTokenResponse> {
-  requireInputString('MyAnimeList', input.clientId, MAX_IDENTIFIER_LENGTH, false);
-  requireInputString('MyAnimeList', input.refreshToken, MAX_TOKEN_LENGTH, false);
-  if (input.clientSecret) requireInputString('MyAnimeList', input.clientSecret, MAX_TOKEN_LENGTH, true);
+  requireInputString(
+    "MyAnimeList",
+    input.clientId,
+    MAX_IDENTIFIER_LENGTH,
+    false,
+  );
+  requireInputString(
+    "MyAnimeList",
+    input.refreshToken,
+    MAX_TOKEN_LENGTH,
+    false,
+  );
+  if (input.clientSecret)
+    requireInputString(
+      "MyAnimeList",
+      input.clientSecret,
+      MAX_TOKEN_LENGTH,
+      true,
+    );
   const body = new URLSearchParams({
-    grant_type: 'refresh_token',
+    grant_type: "refresh_token",
     client_id: input.clientId,
     refresh_token: input.refreshToken,
-    ...(input.clientSecret ? { client_secret: input.clientSecret } : {})
+    ...(input.clientSecret ? { client_secret: input.clientSecret } : {}),
   });
-  const response = await postForm(`${MYANIMELIST_AUTH_URL}/token`, body, request, 'MyAnimeList', options);
-  if (!response.ok) throw providerError('MyAnimeList', response);
-  return validateMyAnimeListTokenResponse(await providerJson('MyAnimeList', response, options));
+  const response = await postForm(
+    `${MYANIMELIST_AUTH_URL}/token`,
+    body,
+    request,
+    "MyAnimeList",
+    options,
+  );
+  if (!response.ok) throw providerError("MyAnimeList", response);
+  return validateMyAnimeListTokenResponse(
+    await providerJson("MyAnimeList", response, options),
+  );
 }
 
 export function startSimklOAuth(input: {
@@ -1055,198 +1596,257 @@ export function startSimklOAuth(input: {
   appVersion?: string;
   userAgent?: string;
 }): OAuthAuthorizationStart {
-  requireInputString('Simkl', input.clientId, MAX_IDENTIFIER_LENGTH, false);
-  if (input.redirectUri) requireRedirectUri('Simkl', input.redirectUri);
+  requireInputString("Simkl", input.clientId, MAX_IDENTIFIER_LENGTH, false);
+  if (input.redirectUri) requireRedirectUri("Simkl", input.redirectUri);
   const codeVerifier = randomBase64Url();
-  const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
+  const codeChallenge = createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64url");
   const appName = input.appName ?? DEFAULT_APP_NAME;
   const appVersion = input.appVersion ?? DEFAULT_APP_VERSION;
   const userAgent = input.userAgent ?? `${appName}/${appVersion}`;
-  requireInputString('Simkl', appName, 256, true);
-  requireInputString('Simkl', appVersion, 64, false);
-  requireInputString('Simkl', userAgent, MAX_USER_AGENT_LENGTH, true);
-  const { state, expiresAt } = createTransaction('simkl', {
+  requireInputString("Simkl", appName, 256, true);
+  requireInputString("Simkl", appVersion, 64, false);
+  requireInputString("Simkl", userAgent, MAX_USER_AGENT_LENGTH, true);
+  const { state, expiresAt } = createTransaction("simkl", {
     clientId: input.clientId,
     codeVerifier,
     appName,
     appVersion,
     userAgent,
-    ...(input.redirectUri ? { redirectUri: input.redirectUri } : {})
+    ...(input.redirectUri ? { redirectUri: input.redirectUri } : {}),
   });
   const url = new URL(SIMKL_AUTH_URL);
   url.search = new URLSearchParams({
-    response_type: 'code',
+    response_type: "code",
     client_id: input.clientId,
     code_challenge: codeChallenge,
-    code_challenge_method: 'S256',
+    code_challenge_method: "S256",
     state,
-    'app-name': appName,
-    'app-version': appVersion,
-    ...(input.redirectUri ? { redirect_uri: input.redirectUri } : {})
+    "app-name": appName,
+    "app-version": appVersion,
+    ...(input.redirectUri ? { redirect_uri: input.redirectUri } : {}),
   }).toString();
-  return { authorizationUrl: url.toString(), state, expiresAt: new Date(expiresAt).toISOString() };
+  return {
+    authorizationUrl: url.toString(),
+    state,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
 }
 
 export async function exchangeSimklOAuth(
   input: { state: string; code: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<SimklTokenResponse> {
-  const transaction = consumeTransaction('simkl', input.state);
-  requireInputString('Simkl', input.code, MAX_IDENTIFIER_LENGTH, false);
-  if (!transaction.clientId || !transaction.codeVerifier) throw new OAuthTransactionError('The Simkl OAuth transaction is incomplete. Start authorization again.');
+  const transaction = consumeTransaction("simkl", input.state);
+  requireInputString("Simkl", input.code, MAX_IDENTIFIER_LENGTH, false);
+  if (!transaction.clientId || !transaction.codeVerifier)
+    throw new OAuthTransactionError(
+      "The Simkl OAuth transaction is incomplete. Start authorization again.",
+    );
   const body = new URLSearchParams({
-    grant_type: 'authorization_code',
+    grant_type: "authorization_code",
     client_id: transaction.clientId,
     code: input.code,
     code_verifier: transaction.codeVerifier,
-    ...(transaction.redirectUri ? { redirect_uri: transaction.redirectUri } : {})
+    ...(transaction.redirectUri
+      ? { redirect_uri: transaction.redirectUri }
+      : {}),
   });
   const url = new URL(SIMKL_TOKEN_URL);
   url.search = new URLSearchParams({
     client_id: transaction.clientId,
-    'app-name': transaction.appName ?? DEFAULT_APP_NAME,
-    'app-version': transaction.appVersion ?? DEFAULT_APP_VERSION
+    "app-name": transaction.appName ?? DEFAULT_APP_NAME,
+    "app-version": transaction.appVersion ?? DEFAULT_APP_VERSION,
   }).toString();
   const response = await postForm(
     url.toString(),
     body,
     request,
-    'Simkl',
+    "Simkl",
     options,
-    { 'User-Agent': transaction.userAgent ?? `${DEFAULT_APP_NAME}/${DEFAULT_APP_VERSION}` }
+    {
+      "User-Agent":
+        transaction.userAgent ?? `${DEFAULT_APP_NAME}/${DEFAULT_APP_VERSION}`,
+    },
   );
-  if (!response.ok) throw providerError('Simkl', response);
-  return validateSimklTokenResponse(await providerJson('Simkl', response, options));
+  if (!response.ok) throw providerError("Simkl", response);
+  return validateSimklTokenResponse(
+    await providerJson("Simkl", response, options),
+  );
 }
 
-export function startShikimoriOAuth(input: { clientId: string; redirectUri: string }): OAuthAuthorizationStart {
-  requireInputString('Shikimori', input.clientId, MAX_IDENTIFIER_LENGTH, false);
-  requireRedirectUri('Shikimori', input.redirectUri);
-  const { state, expiresAt } = createTransaction('shikimori', {
+export function startShikimoriOAuth(input: {
+  clientId: string;
+  redirectUri: string;
+}): OAuthAuthorizationStart {
+  requireInputString("Shikimori", input.clientId, MAX_IDENTIFIER_LENGTH, false);
+  requireRedirectUri("Shikimori", input.redirectUri);
+  const { state, expiresAt } = createTransaction("shikimori", {
     clientId: input.clientId,
-    redirectUri: input.redirectUri
+    redirectUri: input.redirectUri,
   });
   const url = new URL(SHIKIMORI_AUTH_URL);
   url.search = new URLSearchParams({
-    response_type: 'code',
+    response_type: "code",
     client_id: input.clientId,
     redirect_uri: input.redirectUri,
-    scope: 'user_rates',
-    state
+    scope: "user_rates",
+    state,
   }).toString();
-  return { authorizationUrl: url.toString(), state, expiresAt: new Date(expiresAt).toISOString() };
+  return {
+    authorizationUrl: url.toString(),
+    state,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
 }
 
 export async function exchangeShikimoriOAuth(
   input: { state: string; code: string; clientSecret: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<ShikimoriTokenResponse> {
-  const transaction = consumeTransaction('shikimori', input.state);
-  requireInputString('Shikimori', input.code, MAX_IDENTIFIER_LENGTH, false);
-  requireInputString('Shikimori', input.clientSecret, MAX_TOKEN_LENGTH, true);
+  const transaction = consumeTransaction("shikimori", input.state);
+  requireInputString("Shikimori", input.code, MAX_IDENTIFIER_LENGTH, false);
+  requireInputString("Shikimori", input.clientSecret, MAX_TOKEN_LENGTH, true);
   if (!transaction.clientId || !transaction.redirectUri) {
-    throw new OAuthTransactionError('The Shikimori OAuth transaction is incomplete. Start authorization again.');
+    throw new OAuthTransactionError(
+      "The Shikimori OAuth transaction is incomplete. Start authorization again.",
+    );
   }
   const body = new URLSearchParams({
     client_id: transaction.clientId,
     client_secret: input.clientSecret,
     code: input.code,
     redirect_uri: transaction.redirectUri,
-    grant_type: 'authorization_code'
+    grant_type: "authorization_code",
   });
-  const response = await postForm(SHIKIMORI_TOKEN_URL, body, request, 'Shikimori', options);
-  if (!response.ok) throw providerError('Shikimori', response);
-  return validateShikimoriTokenResponse(await providerJson('Shikimori', response, options));
+  const response = await postForm(
+    SHIKIMORI_TOKEN_URL,
+    body,
+    request,
+    "Shikimori",
+    options,
+  );
+  if (!response.ok) throw providerError("Shikimori", response);
+  return validateShikimoriTokenResponse(
+    await providerJson("Shikimori", response, options),
+  );
 }
 
 export async function refreshShikimoriOAuth(
   input: { clientId: string; clientSecret: string; refreshToken: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<ShikimoriTokenResponse> {
-  requireInputString('Shikimori', input.clientId, MAX_IDENTIFIER_LENGTH, false);
-  requireInputString('Shikimori', input.clientSecret, MAX_TOKEN_LENGTH, true);
-  requireInputString('Shikimori', input.refreshToken, MAX_TOKEN_LENGTH, false);
+  requireInputString("Shikimori", input.clientId, MAX_IDENTIFIER_LENGTH, false);
+  requireInputString("Shikimori", input.clientSecret, MAX_TOKEN_LENGTH, true);
+  requireInputString("Shikimori", input.refreshToken, MAX_TOKEN_LENGTH, false);
   const body = new URLSearchParams({
     client_id: input.clientId,
     client_secret: input.clientSecret,
     refresh_token: input.refreshToken,
-    grant_type: 'refresh_token'
+    grant_type: "refresh_token",
   });
-  const response = await postForm(SHIKIMORI_TOKEN_URL, body, request, 'Shikimori', options);
-  if (!response.ok) throw providerError('Shikimori', response);
-  return validateShikimoriTokenResponse(await providerJson('Shikimori', response, options));
+  const response = await postForm(
+    SHIKIMORI_TOKEN_URL,
+    body,
+    request,
+    "Shikimori",
+    options,
+  );
+  if (!response.ok) throw providerError("Shikimori", response);
+  return validateShikimoriTokenResponse(
+    await providerJson("Shikimori", response, options),
+  );
 }
 
-export function startAnnictOAuth(input: { clientId: string; redirectUri: string }): OAuthAuthorizationStart {
-  requireInputString('Annict', input.clientId, MAX_IDENTIFIER_LENGTH, false);
+export function startAnnictOAuth(input: {
+  clientId: string;
+  redirectUri: string;
+}): OAuthAuthorizationStart {
+  requireInputString("Annict", input.clientId, MAX_IDENTIFIER_LENGTH, false);
   const redirectUri = requireAnnictRedirectUri(input.redirectUri);
-  const { state, expiresAt } = createTransaction('annict', {
+  const { state, expiresAt } = createTransaction("annict", {
     clientId: input.clientId,
-    redirectUri
+    redirectUri,
   });
   const url = new URL(ANNICT_AUTH_URL);
   url.search = new URLSearchParams({
     client_id: input.clientId,
-    response_type: 'code',
+    response_type: "code",
     redirect_uri: redirectUri,
-    scope: 'read write',
-    state
+    scope: "read write",
+    state,
   }).toString();
-  return { authorizationUrl: url.toString(), state, expiresAt: new Date(expiresAt).toISOString() };
+  return {
+    authorizationUrl: url.toString(),
+    state,
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
 }
 
 export async function exchangeAnnictOAuth(
   input: { state: string; code: string; clientSecret: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<AnnictTokenResponse> {
-  const transaction = consumeTransaction('annict', input.state);
-  requireInputString('Annict', input.code, MAX_IDENTIFIER_LENGTH, false);
-  requireInputString('Annict', input.clientSecret, MAX_TOKEN_LENGTH, true);
+  const transaction = consumeTransaction("annict", input.state);
+  requireInputString("Annict", input.code, MAX_IDENTIFIER_LENGTH, false);
+  requireInputString("Annict", input.clientSecret, MAX_TOKEN_LENGTH, true);
   if (!transaction.clientId || !transaction.redirectUri) {
-    throw new OAuthTransactionError('The Annict OAuth transaction is incomplete. Start authorization again.');
+    throw new OAuthTransactionError(
+      "The Annict OAuth transaction is incomplete. Start authorization again.",
+    );
   }
   const body = new URLSearchParams({
     client_id: transaction.clientId,
     client_secret: input.clientSecret,
-    grant_type: 'authorization_code',
+    grant_type: "authorization_code",
     redirect_uri: transaction.redirectUri,
-    code: input.code
+    code: input.code,
   });
-  const response = await postForm(`${ANNICT_API_URL}/oauth/token`, body, request, 'Annict', options);
-  if (!response.ok) throw providerError('Annict', response);
-  return validateAnnictTokenResponse(await providerJson('Annict', response, options));
+  const response = await postForm(
+    `${ANNICT_API_URL}/oauth/token`,
+    body,
+    request,
+    "Annict",
+    options,
+  );
+  if (!response.ok) throw providerError("Annict", response);
+  return validateAnnictTokenResponse(
+    await providerJson("Annict", response, options),
+  );
 }
 
 export async function revokeAnnictOAuth(
   input: { accessToken: string; clientId: string; clientSecret: string },
   request: typeof fetch = fetch,
-  options: OAuthRequestOptions = {}
+  options: OAuthRequestOptions = {},
 ): Promise<Record<string, never>> {
-  requireInputString('Annict', input.accessToken, MAX_TOKEN_LENGTH, false);
-  requireInputString('Annict', input.clientId, MAX_IDENTIFIER_LENGTH, false);
-  requireInputString('Annict', input.clientSecret, MAX_TOKEN_LENGTH, true);
+  requireInputString("Annict", input.accessToken, MAX_TOKEN_LENGTH, false);
+  requireInputString("Annict", input.clientId, MAX_IDENTIFIER_LENGTH, false);
+  requireInputString("Annict", input.clientSecret, MAX_TOKEN_LENGTH, true);
   const body = new URLSearchParams({
     client_id: input.clientId,
     client_secret: input.clientSecret,
-    token: input.accessToken
+    token: input.accessToken,
   });
   const response = await postForm(
     `${ANNICT_API_URL}/oauth/revoke`,
     body,
     request,
-    'Annict',
+    "Annict",
     options,
-    { Authorization: `Bearer ${input.accessToken}` }
+    { Authorization: `Bearer ${input.accessToken}` },
   );
-  if (!response.ok) throw providerError('Annict', response);
-  if (response.status !== 200) throw invalidProviderResponse('Annict', response.status);
-  const result = await providerJson('Annict', response, options);
+  if (!response.ok) throw providerError("Annict", response);
+  if (response.status !== 200)
+    throw invalidProviderResponse("Annict", response.status);
+  const result = await providerJson("Annict", response, options);
   if (!isRecord(result) || Object.keys(result).length !== 0) {
-    throw invalidProviderResponse('Annict', response.status);
+    throw invalidProviderResponse("Annict", response.status);
   }
   return {};
 }

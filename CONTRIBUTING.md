@@ -12,3 +12,5 @@ Before adding a connector:
 6. Document limitations.
 
 Do not contribute scraping or ToS-bypass automation.
+
+Workflow changes must use immutable 40-character GitHub Action commit pins, keep top-level permissions at `contents: read`, and set `persist-credentials: false` for `actions/checkout`. The CI workflow must retain its encrypted-storage recovery smoke test; the release workflow must retain GitHub provenance attestation. Run `pnpm check:workflow`, `pnpm check:release-metadata`, and `pnpm check:package-contents` before opening a pull request.

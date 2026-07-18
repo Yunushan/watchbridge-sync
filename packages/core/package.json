@@ -1,8 +1,13 @@
 {
   "name": "@watchbridge/core",
   "version": "0.1.0",
-  "license": "MIT",
+  "license": "0BSD",
   "type": "module",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "package.json"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -11,7 +16,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "typescript": "latest",
-    "vitest": "latest"
+    "typescript": "5.7.3",
+    "vitest": "4.1.10"
   }
 }
