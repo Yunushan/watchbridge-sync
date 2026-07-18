@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # node:24-bookworm-slim, pinned to its Docker Hub multi-platform manifest.
-FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS build
+FROM node:26-bookworm-slim@sha256:2d49d876e96237d76de412761cf05dbfe5aee325cc4406a4d41d5824c5bb8beb AS build
 
 RUN --mount=type=secret,id=watchbridge_registry_ca,required=false,target=/run/secrets/watchbridge_registry_ca \
     apt-get update \
@@ -32,7 +32,7 @@ FROM build AS api-dependencies
 # of the final image while preserving pnpm's workspace resolution correctly.
 RUN pnpm --filter @watchbridge/api --prod deploy /runtime
 
-FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS api
+FROM node:26-bookworm-slim@sha256:2d49d876e96237d76de412761cf05dbfe5aee325cc4406a4d41d5824c5bb8beb AS api
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates \
