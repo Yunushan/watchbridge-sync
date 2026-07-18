@@ -17,7 +17,7 @@ jobs:
         with:
           persist-credentials: false
       # v5, pinned to an immutable commit.
-      - uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
       # v5, pinned to an immutable commit.
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
