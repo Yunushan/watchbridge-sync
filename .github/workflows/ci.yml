@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 15
     steps:
       # v5, pinned to an immutable commit; Dependabot keeps this current.
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           persist-credentials: false
       # v5, pinned to an immutable commit.
@@ -39,7 +39,7 @@ jobs:
       WATCHBRIDGE_STORAGE_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
     steps:
       # v5, pinned to an immutable commit; Dependabot keeps this current.
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           persist-credentials: false
       - run: docker compose -f docker-compose.production.yml up --build --detach
