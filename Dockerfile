@@ -60,7 +60,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 CMD ["node", "dist/server.js"]
 
 # nginx:1.27-alpine, pinned to its Docker Hub multi-platform manifest.
-FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS web
+FROM nginx:1.31-alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752 AS web
 
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/security.txt /etc/nginx/security.txt
@@ -73,7 +73,7 @@ ENTRYPOINT ["nginx", "-g", "daemon off;"]
 
 # Optional public TLS edge. Certificates arrive only as Compose secrets at
 # runtime, never through the build context or image layers.
-FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS edge
+FROM nginx:1.31-alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752 AS edge
 
 COPY docker/nginx-edge.conf /etc/nginx/nginx.conf
 EXPOSE 8080 8443
