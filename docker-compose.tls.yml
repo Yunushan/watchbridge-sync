@@ -16,7 +16,9 @@ services:
         target: watchbridge_tls_private_key.pem
     # File-backed Compose secrets preserve the host key mode (often 0600), so
     # let only the Nginx master open them; docker/nginx-edge.conf drops workers
-    # to the unprivileged nginx account after startup.
+    # to the unprivileged nginx account after startup. These are the minimum
+    # capabilities needed for that transition: read a host-owned secret and
+    # switch the worker UID/GID. All other capabilities remain dropped.
     user: "0:0"
     read_only: true
     tmpfs:
@@ -25,6 +27,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+      - SETGID
+      - SETUID
     cpus: ${WATCHBRIDGE_EDGE_CPUS:-0.25}
     mem_limit: ${WATCHBRIDGE_EDGE_MEMORY_LIMIT:-128m}
     memswap_limit: ${WATCHBRIDGE_EDGE_MEMORY_LIMIT:-128m}
