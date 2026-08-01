@@ -33,7 +33,7 @@ Le dépôt contient un modèle de données canonique, la conversion d'échelles 
 ## Démarrage Rapide
 
 ```bash
-corepack enable
+npm install --global pnpm@9.15.0
 pnpm install
 pnpm lint
 pnpm test

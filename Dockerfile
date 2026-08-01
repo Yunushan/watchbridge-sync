@@ -12,7 +12,9 @@ RUN --mount=type=secret,id=watchbridge_registry_ca,required=false,target=/run/se
 ENV NODE_OPTIONS=--use-system-ca
 
 WORKDIR /workspace
-RUN corepack enable
+# Node 25 no longer ships Corepack. Install the locked package manager
+# explicitly so the build remains reproducible across supported Node images.
+RUN npm install --global --no-fund --no-audit pnpm@9.15.0
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
@@ -37,6 +39,12 @@ FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# npm is a build-time tool only. Removing it from the runtime image keeps the
+# deployed attack surface small and prevents vulnerabilities in npm's bundled
+# transitive dependencies from shipping with the API.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 ENV NODE_ENV=production \
     NODE_OPTIONS=--use-system-ca \

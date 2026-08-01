@@ -33,7 +33,7 @@ Bu depo kanonik veri modeli, puan ölçeği dönüşümü, senkronizasyon planla
 ## Hızlı Başlangıç
 
 ```bash
-corepack enable
+npm install --global pnpm@9.15.0
 pnpm install
 pnpm lint
 pnpm test
