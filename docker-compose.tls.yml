@@ -14,6 +14,10 @@ services:
         target: watchbridge_tls_certificate.pem
       - source: watchbridge_tls_private_key
         target: watchbridge_tls_private_key.pem
+    # File-backed Compose secrets preserve the host key mode (often 0600), so
+    # let only the Nginx master open them; docker/nginx-edge.conf drops workers
+    # to the unprivileged nginx account after startup.
+    user: "0:0"
     read_only: true
     tmpfs:
       - /tmp

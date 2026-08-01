@@ -42,7 +42,7 @@ The shipped Compose stack intentionally speaks HTTP on its published web port; i
 
 ### Shipped TLS edge profile
 
-For a single-host public deployment, `docker-compose.tls.yml` ships a separate non-root, read-only Nginx TLS edge. It redirects HTTP to HTTPS, serves HSTS only over TLS, and proxies solely to the private `web` service. Supply a PEM certificate chain and its PEM private key from your secret-management or certificate-renewal process; Compose mounts them as runtime secrets, so they are not copied into the build context or image layers. Bind the base web listener only to loopback while the edge owns public ports:
+For a single-host public deployment, `docker-compose.tls.yml` ships a separate read-only Nginx TLS edge with unprivileged worker processes. Because file-backed Compose secrets preserve the host key mode (commonly `0600`), the Compose service runs only the Nginx master as UID 0 to open the certificate and key; `docker/nginx-edge.conf` immediately drops workers to the unprivileged `nginx` account. It redirects HTTP to HTTPS, serves HSTS only over TLS, and proxies solely to the private `web` service. Supply a PEM certificate chain and its PEM private key from your secret-management or certificate-renewal process; Compose mounts them as runtime secrets, so they are not copied into the build context or image layers. Bind the base web listener only to loopback while the edge owns public ports:
 
 ```bash
 WATCHBRIDGE_HTTP_PORT=127.0.0.1:18080 \

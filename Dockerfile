@@ -80,14 +80,14 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
 ENTRYPOINT ["nginx", "-g", "daemon off;"]
 
 # Optional public TLS edge. Certificates arrive only as Compose secrets at
-# runtime, never through the build context or image layers. The master process
-# runs as root to read file-backed secrets; nginx workers drop to the nginx
-# account in docker/nginx-edge.conf.
+# runtime, never through the build context or image layers. The Compose TLS
+# profile elevates only the master process long enough to read file-backed
+# secrets; nginx workers drop to the nginx account in docker/nginx-edge.conf.
 FROM nginx:1.31-alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752 AS edge
 
 COPY docker/nginx-edge.conf /etc/nginx/nginx.conf
 EXPOSE 8080 8443
-USER root
+USER nginx
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/edge-healthz || exit 1
 ENTRYPOINT ["nginx", "-g", "daemon off;"]
