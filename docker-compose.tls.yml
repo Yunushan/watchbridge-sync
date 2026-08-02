@@ -37,6 +37,11 @@ services:
     memswap_limit: ${WATCHBRIDGE_EDGE_MEMORY_LIMIT:-128m}
     pids_limit: 64
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 secrets:
   watchbridge_tls_certificate:
