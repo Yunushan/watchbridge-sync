@@ -1174,6 +1174,12 @@ describe("API access gate", () => {
     expect(text).toMatch(
       /watchbridge_http_requests_total\{route="services",status="2xx"\} [1-9]\d*/,
     );
+    expect(text).toMatch(
+      /watchbridge_http_request_duration_seconds_bucket\{route="services",status="2xx",le="\+Inf"\} [1-9]\d*/,
+    );
+    expect(text).toMatch(
+      /watchbridge_http_request_duration_seconds_(sum|count)\{route="services",status="2xx"\} /,
+    );
     expect(text).toContain("watchbridge_process_start_time_seconds ");
     expect(text).not.toContain(apiKey);
     expect(text).not.toContain("tenant=");

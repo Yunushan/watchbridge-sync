@@ -20,12 +20,12 @@ groups:
           runbook: Inspect API logs and durable sync-job records; do not retry confirmed provider writes until partial-write evidence is reviewed.
 
       - alert: WatchBridgeApiHighLatency
-        expr: sum(rate(watchbridge_http_request_duration_seconds[5m])) / clamp_min(sum(rate(watchbridge_http_requests_total[5m])), 0.001) > 2
+        expr: histogram_quantile(0.95, sum by (le) (rate(watchbridge_http_request_duration_seconds_bucket[5m]))) > 2
         for: 15m
         labels:
           severity: warning
         annotations:
-          summary: WatchBridge API average request latency exceeds 2 seconds
+          summary: WatchBridge API p95 request latency exceeds 2 seconds
           runbook: Check provider latency, rate limits, storage I/O, and reverse-proxy saturation before increasing request limits.
 
       - alert: WatchBridgeSyncExecutionSaturated

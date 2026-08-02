@@ -114,9 +114,22 @@ let activeApiRequests = 0;
 let activeSyncExecutions = 0;
 const processStartedAt = Date.now();
 
+const REQUEST_DURATION_BUCKETS_SECONDS = [
+  0.05,
+  0.1,
+  0.25,
+  0.5,
+  1,
+  2,
+  5,
+  10,
+] as const;
+
 interface RequestMetric {
   count: number;
   durationSeconds: number;
+  /** Cumulative counts for the explicit buckets followed by +Inf. */
+  durationBucketCounts: number[];
 }
 
 const requestMetrics = new Map<string, RequestMetric>();
@@ -142,9 +155,24 @@ function recordRequestMetric(
   const route = metricRouteGroup(path);
   const statusClass = `${Math.floor(status / 100)}xx`;
   const key = `${route}:${statusClass}`;
-  const current = requestMetrics.get(key) ?? { count: 0, durationSeconds: 0 };
+  const current =
+    requestMetrics.get(key) ?? {
+      count: 0,
+      durationSeconds: 0,
+      durationBucketCounts: Array.from(
+        { length: REQUEST_DURATION_BUCKETS_SECONDS.length + 1 },
+        () => 0,
+      ),
+    };
+  const durationSeconds = Math.max(0, durationMilliseconds) / 1_000;
   current.count += 1;
-  current.durationSeconds += Math.max(0, durationMilliseconds) / 1_000;
+  current.durationSeconds += durationSeconds;
+  for (const [index, bucket] of REQUEST_DURATION_BUCKETS_SECONDS.entries()) {
+    if (durationSeconds <= bucket) {
+      current.durationBucketCounts[index] += 1;
+    }
+  }
+  current.durationBucketCounts[REQUEST_DURATION_BUCKETS_SECONDS.length] += 1;
   requestMetrics.set(key, current);
 }
 
@@ -152,8 +180,8 @@ function prometheusMetrics(): string {
   const lines = [
     "# HELP watchbridge_http_requests_total HTTP requests handled by route group and status class.",
     "# TYPE watchbridge_http_requests_total counter",
-    "# HELP watchbridge_http_request_duration_seconds Total HTTP request handling time by route group and status class.",
-    "# TYPE watchbridge_http_request_duration_seconds counter",
+    "# HELP watchbridge_http_request_duration_seconds HTTP request duration histogram by route group and status class.",
+    "# TYPE watchbridge_http_request_duration_seconds histogram",
   ];
   for (const [key, metric] of [...requestMetrics.entries()].sort(
     ([left], [right]) => left.localeCompare(right),
@@ -161,8 +189,20 @@ function prometheusMetrics(): string {
     const [route, status] = key.split(":");
     const labels = `{route="${route}",status="${status}"}`;
     lines.push(`watchbridge_http_requests_total${labels} ${metric.count}`);
+    for (const [index, bucket] of [
+      ...REQUEST_DURATION_BUCKETS_SECONDS,
+      Number.POSITIVE_INFINITY,
+    ].entries()) {
+      const upperBound = Number.isFinite(bucket) ? bucket : "+Inf";
+      lines.push(
+        `watchbridge_http_request_duration_seconds_bucket{route="${route}",status="${status}",le="${upperBound}"} ${metric.durationBucketCounts[index]}`,
+      );
+    }
     lines.push(
-      `watchbridge_http_request_duration_seconds${labels} ${metric.durationSeconds}`,
+      `watchbridge_http_request_duration_seconds_sum${labels} ${metric.durationSeconds}`,
+    );
+    lines.push(
+      `watchbridge_http_request_duration_seconds_count${labels} ${metric.count}`,
     );
   }
   lines.push(
