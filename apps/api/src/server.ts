@@ -98,6 +98,11 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 25_000;
 const DEFAULT_HEADERS_TIMEOUT_MS = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 5_000;
+// Keep authorization comparisons fixed-size without hashing API keys as
+// passwords. The configured API-key policy caps keys at 4,096 characters;
+// UTF-8 encoding can use at most four bytes per character, plus the Bearer
+// scheme prefix and a small safety margin.
+const MAX_AUTHORIZATION_BYTES = 16_384;
 
 interface RateLimitBucket {
   windowStartedAt: number;
@@ -273,11 +278,20 @@ function authorizedApiRequest(
   authorization: string | undefined,
   apiKey: string,
 ): boolean {
-  const supplied = createHash("sha256")
-    .update(authorization ?? "")
-    .digest();
-  const expected = createHash("sha256").update(`Bearer ${apiKey}`).digest();
-  return timingSafeEqual(supplied, expected);
+  const encode = (value: string): { bytes: Buffer; valid: boolean } => {
+    const bytes = Buffer.from(value, "utf8");
+    const fixed = Buffer.alloc(MAX_AUTHORIZATION_BYTES);
+    const valid = bytes.length <= MAX_AUTHORIZATION_BYTES;
+    bytes.copy(fixed, 0, 0, Math.min(bytes.length, MAX_AUTHORIZATION_BYTES));
+    return { bytes: fixed, valid };
+  };
+  const supplied = encode(authorization ?? "");
+  const expected = encode(`Bearer ${apiKey}`);
+  return (
+    supplied.valid &&
+    expected.valid &&
+    timingSafeEqual(supplied.bytes, expected.bytes)
+  );
 }
 
 function authenticatedTenant(

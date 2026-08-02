@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 function runRunner(environment) {
@@ -84,6 +84,7 @@ test("live-provider runner submits only a dry-run to a loopback API without logg
       WATCHBRIDGE_LIVE_API_URL: `http://127.0.0.1:${port}`,
       WATCHBRIDGE_LIVE_API_KEY: apiKey,
       WATCHBRIDGE_LIVE_EVIDENCE_PATH: evidencePath,
+      RUNNER_TEMP: dirname(evidencePath),
       WATCHBRIDGE_LIVE_EVIDENCE_COMMIT: "a".repeat(40),
       WATCHBRIDGE_LIVE_SYNC_REQUEST: JSON.stringify({
         source: "trakt",
