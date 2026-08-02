@@ -6,6 +6,7 @@ services:
     environment:
       WATCHBRIDGE_API_KEY: ${WATCHBRIDGE_API_KEY:?set a 32-character-or-longer API key in your environment}
       WATCHBRIDGE_STORAGE_KEY: ${WATCHBRIDGE_STORAGE_KEY:?set a 32-byte storage key in your environment}
+      WATCHBRIDGE_STORAGE_KEY_PREVIOUS: ${WATCHBRIDGE_STORAGE_KEY_PREVIOUS:-}
       WATCHBRIDGE_BACKUP_RETENTION_DAYS: ${WATCHBRIDGE_BACKUP_RETENTION_DAYS:-90}
       WATCHBRIDGE_JOB_RETENTION_DAYS: ${WATCHBRIDGE_JOB_RETENTION_DAYS:-90}
       WATCHBRIDGE_RATE_LIMIT_PER_MINUTE: ${WATCHBRIDGE_RATE_LIMIT_PER_MINUTE:-120}
@@ -34,6 +35,11 @@ services:
     pids_limit: 256
     restart: unless-stopped
     stop_grace_period: 35s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   web:
     build:
@@ -56,6 +62,11 @@ services:
     memswap_limit: ${WATCHBRIDGE_WEB_MEMORY_LIMIT:-256m}
     pids_limit: 64
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   watchbridge-data:

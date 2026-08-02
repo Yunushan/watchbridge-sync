@@ -98,6 +98,11 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 25_000;
 const DEFAULT_HEADERS_TIMEOUT_MS = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 5_000;
+// Keep authorization comparisons fixed-size without hashing API keys as
+// passwords. The configured API-key policy caps keys at 4,096 characters;
+// UTF-8 encoding can use at most four bytes per character, plus the Bearer
+// scheme prefix and a small safety margin.
+const MAX_AUTHORIZATION_BYTES = 16_384;
 
 interface RateLimitBucket {
   windowStartedAt: number;
@@ -109,9 +114,22 @@ let activeApiRequests = 0;
 let activeSyncExecutions = 0;
 const processStartedAt = Date.now();
 
+const REQUEST_DURATION_BUCKETS_SECONDS = [
+  0.05,
+  0.1,
+  0.25,
+  0.5,
+  1,
+  2,
+  5,
+  10,
+] as const;
+
 interface RequestMetric {
   count: number;
   durationSeconds: number;
+  /** Cumulative counts for the explicit buckets followed by +Inf. */
+  durationBucketCounts: number[];
 }
 
 const requestMetrics = new Map<string, RequestMetric>();
@@ -137,9 +155,24 @@ function recordRequestMetric(
   const route = metricRouteGroup(path);
   const statusClass = `${Math.floor(status / 100)}xx`;
   const key = `${route}:${statusClass}`;
-  const current = requestMetrics.get(key) ?? { count: 0, durationSeconds: 0 };
+  const current =
+    requestMetrics.get(key) ?? {
+      count: 0,
+      durationSeconds: 0,
+      durationBucketCounts: Array.from(
+        { length: REQUEST_DURATION_BUCKETS_SECONDS.length + 1 },
+        () => 0,
+      ),
+    };
+  const durationSeconds = Math.max(0, durationMilliseconds) / 1_000;
   current.count += 1;
-  current.durationSeconds += Math.max(0, durationMilliseconds) / 1_000;
+  current.durationSeconds += durationSeconds;
+  for (const [index, bucket] of REQUEST_DURATION_BUCKETS_SECONDS.entries()) {
+    if (durationSeconds <= bucket) {
+      current.durationBucketCounts[index] += 1;
+    }
+  }
+  current.durationBucketCounts[REQUEST_DURATION_BUCKETS_SECONDS.length] += 1;
   requestMetrics.set(key, current);
 }
 
@@ -147,8 +180,8 @@ function prometheusMetrics(): string {
   const lines = [
     "# HELP watchbridge_http_requests_total HTTP requests handled by route group and status class.",
     "# TYPE watchbridge_http_requests_total counter",
-    "# HELP watchbridge_http_request_duration_seconds Total HTTP request handling time by route group and status class.",
-    "# TYPE watchbridge_http_request_duration_seconds counter",
+    "# HELP watchbridge_http_request_duration_seconds HTTP request duration histogram by route group and status class.",
+    "# TYPE watchbridge_http_request_duration_seconds histogram",
   ];
   for (const [key, metric] of [...requestMetrics.entries()].sort(
     ([left], [right]) => left.localeCompare(right),
@@ -156,8 +189,20 @@ function prometheusMetrics(): string {
     const [route, status] = key.split(":");
     const labels = `{route="${route}",status="${status}"}`;
     lines.push(`watchbridge_http_requests_total${labels} ${metric.count}`);
+    for (const [index, bucket] of [
+      ...REQUEST_DURATION_BUCKETS_SECONDS,
+      Number.POSITIVE_INFINITY,
+    ].entries()) {
+      const upperBound = Number.isFinite(bucket) ? bucket : "+Inf";
+      lines.push(
+        `watchbridge_http_request_duration_seconds_bucket{route="${route}",status="${status}",le="${upperBound}"} ${metric.durationBucketCounts[index]}`,
+      );
+    }
     lines.push(
-      `watchbridge_http_request_duration_seconds${labels} ${metric.durationSeconds}`,
+      `watchbridge_http_request_duration_seconds_sum${labels} ${metric.durationSeconds}`,
+    );
+    lines.push(
+      `watchbridge_http_request_duration_seconds_count${labels} ${metric.count}`,
     );
   }
   lines.push(
@@ -269,15 +314,34 @@ function storageRecordId(id: string): string {
   return tenant.storageSubdirectory ? `${tenant.id}:${id}` : id;
 }
 
+interface EncodedAuthorization {
+  bytes: Buffer;
+  valid: boolean;
+}
+
+function encodeAuthorization(value: string): EncodedAuthorization {
+  const bytes = Buffer.from(value, "utf8");
+  const fixed = Buffer.alloc(MAX_AUTHORIZATION_BYTES);
+  const valid = bytes.length <= MAX_AUTHORIZATION_BYTES;
+  bytes.copy(fixed, 0, 0, Math.min(bytes.length, MAX_AUTHORIZATION_BYTES));
+  return { bytes: fixed, valid };
+}
+
 function authorizedApiRequest(
-  authorization: string | undefined,
+  supplied: EncodedAuthorization,
   apiKey: string,
+  expected: Buffer,
 ): boolean {
-  const supplied = createHash("sha256")
-    .update(authorization ?? "")
-    .digest();
-  const expected = createHash("sha256").update(`Bearer ${apiKey}`).digest();
-  return timingSafeEqual(supplied, expected);
+  const expectedBytes = Buffer.from(`Bearer ${apiKey}`, "utf8");
+  const valid = expectedBytes.length <= MAX_AUTHORIZATION_BYTES;
+  expected.fill(0);
+  expectedBytes.copy(
+    expected,
+    0,
+    0,
+    Math.min(expectedBytes.length, MAX_AUTHORIZATION_BYTES),
+  );
+  return supplied.valid && valid && timingSafeEqual(supplied.bytes, expected);
 }
 
 function authenticatedTenant(
@@ -285,9 +349,16 @@ function authenticatedTenant(
 ): TenantScope | undefined {
   const configured = configuredTenants();
   if (!configured.length) return DEFAULT_TENANT;
-  return configured.find((tenant) =>
-    authorizedApiRequest(authorization, tenant.apiKey!),
-  );
+  const supplied = encodeAuthorization(authorization ?? "");
+  const expected = Buffer.alloc(MAX_AUTHORIZATION_BYTES);
+  try {
+    return configured.find((tenant) =>
+      authorizedApiRequest(supplied, tenant.apiKey!, expected),
+    );
+  } finally {
+    supplied.bytes.fill(0);
+    expected.fill(0);
+  }
 }
 
 function productionTenantConfigurationValid(): boolean {
@@ -2061,9 +2132,17 @@ export async function apiReady(): Promise<boolean> {
     apiMaxConcurrentRequests();
     apiMaxConcurrentSyncs();
     const storageKey = parseStorageKey(process.env.WATCHBRIDGE_STORAGE_KEY);
+    const previousStorageKey = parseStorageKey(
+      process.env.WATCHBRIDGE_STORAGE_KEY_PREVIOUS,
+    );
+    if (previousStorageKey && !storageKey) {
+      previousStorageKey.fill(0);
+      return false;
+    }
     if (process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR && !storageKey)
       return false;
     storageKey?.fill(0);
+    previousStorageKey?.fill(0);
     storageRetentionPolicy();
     const scopes = configured.length ? configured : [DEFAULT_TENANT];
     const directories = scopes.flatMap((tenant) => [
@@ -2147,17 +2226,17 @@ async function readOAuthVaultRecord(
 ): Promise<OAuthVaultRecord | undefined> {
   if (!isBackupId(id)) return undefined;
   try {
-    const stored = await readFile(
-      join(oauthVaultDirectory(), `${id}.json`),
-      "utf8",
-    );
+    const path = join(oauthVaultDirectory(), `${id}.json`);
+    const stored = await readFile(path, "utf8");
     const decoded = decodeStoredJson(
       stored,
       "oauth-vault",
       storageRecordId(id),
     );
-    if (decoded.migrationRequired) return undefined;
-    return parseOAuthVaultRecord(JSON.parse(decoded.plaintext), id);
+    const record = parseOAuthVaultRecord(JSON.parse(decoded.plaintext), id);
+    if (record && decoded.migrationRequired)
+      await rewriteMigratedStorageFile(path, decoded.plaintext, "oauth-vault", id);
+    return record;
   } catch {
     return undefined;
   }
@@ -2856,7 +2935,7 @@ function parseStoredSyncJob(
 async function rewriteMigratedStorageFile(
   path: string,
   plaintext: string,
-  kind: "backup" | "job",
+  kind: "backup" | "job" | "oauth-vault",
   id: string,
 ): Promise<void> {
   const encrypted = encodeStoredJson(plaintext, kind, storageRecordId(id));

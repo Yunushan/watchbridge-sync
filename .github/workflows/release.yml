@@ -8,11 +8,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Build, attest, and publish release
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    environment:
+      name: production-release
     permissions:
       actions: read
       artifact-metadata: write

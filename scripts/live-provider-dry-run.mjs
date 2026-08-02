@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 
 const requestSource = process.env.WATCHBRIDGE_LIVE_SYNC_REQUEST;
 const apiKey = process.env.WATCHBRIDGE_LIVE_API_KEY;
@@ -51,9 +52,19 @@ function liveSyncRequest(value) {
     throw new Error("WATCHBRIDGE_LIVE_SYNC_REQUEST must be a JSON object.");
   }
   const request = parsed;
+  const source =
+    typeof request.source === "string" &&
+    /^[a-z0-9][a-z0-9_-]{0,63}$/.test(request.source)
+      ? request.source
+      : undefined;
+  const target =
+    typeof request.target === "string" &&
+    /^[a-z0-9][a-z0-9_-]{0,63}$/.test(request.target)
+      ? request.target
+      : undefined;
   if (
-    typeof request.source !== "string" ||
-    typeof request.target !== "string" ||
+    source === undefined ||
+    target === undefined ||
     !request.selection ||
     typeof request.selection !== "object" ||
     Array.isArray(request.selection) ||
@@ -64,13 +75,34 @@ function liveSyncRequest(value) {
       "The live-provider request must specify source, target, a selection, dryRun: true, and must not set confirmWrite: true.",
     );
   }
-  return request;
+  return { ...request, source, target };
 }
 
 async function writeEvidence(request, actionGroups) {
   if (evidencePath === undefined || evidencePath === "") return;
   if (typeof evidencePath !== "string" || evidencePath.includes("\0")) {
     throw new Error("WATCHBRIDGE_LIVE_EVIDENCE_PATH must be a valid file path.");
+  }
+  const runnerTemp = process.env.RUNNER_TEMP;
+  if (typeof runnerTemp !== "string" || !runnerTemp.trim()) {
+    throw new Error(
+      "RUNNER_TEMP must be configured before writing live-provider evidence.",
+    );
+  }
+  const evidenceRoot = resolve(runnerTemp);
+  const safeEvidencePath = resolve(evidencePath);
+  const relativeEvidencePath = relative(evidenceRoot, safeEvidencePath);
+  if (
+    !isAbsolute(evidenceRoot) ||
+    !isAbsolute(safeEvidencePath) ||
+    relativeEvidencePath === "" ||
+    relativeEvidencePath === "." ||
+    relativeEvidencePath.startsWith("..") ||
+    isAbsolute(relativeEvidencePath)
+  ) {
+    throw new Error(
+      "WATCHBRIDGE_LIVE_EVIDENCE_PATH must remain inside RUNNER_TEMP.",
+    );
   }
   if (
     typeof evidenceCommit !== "string" ||
@@ -89,7 +121,7 @@ async function writeEvidence(request, actionGroups) {
     dryRun: true,
     actionGroups,
   };
-  await writeFile(evidencePath, `${JSON.stringify(evidence)}\n`, {
+  await writeFile(safeEvidencePath, `${JSON.stringify(evidence)}\n`, {
     encoding: "utf8",
     mode: 0o600,
   });

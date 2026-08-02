@@ -3,6 +3,7 @@ import { decodeStoredJson, encodeStoredJson, parsePlaintextMigrationOptIn, parse
 
 const hexKey = '01'.repeat(32);
 const otherHexKey = '02'.repeat(32);
+const previousHexKey = '03'.repeat(32);
 const id = '11111111-1111-4111-8111-111111111111';
 const plaintext = '{\n  "private": "watch-history"\n}';
 
@@ -53,6 +54,23 @@ describe('storage encryption', () => {
     ]) {
       expect(attempt).toThrowError(new StorageCryptoError());
     }
+  });
+
+  it('decrypts with a previous key once and marks the record for re-encryption', () => {
+    const stored = encodeStoredJson(plaintext, 'backup', id, previousHexKey, 'false', '');
+    expect(decodeStoredJson(stored, 'backup', id, hexKey, 'false', previousHexKey)).toEqual({
+      plaintext,
+      migrationRequired: true
+    });
+    expect(decodeStoredJson(stored, 'backup', id, previousHexKey, 'false', hexKey)).toEqual({
+      plaintext,
+      migrationRequired: false
+    });
+  });
+
+  it('rejects a previous key without an active replacement key', () => {
+    expect(() => encodeStoredJson(plaintext, 'backup', id, '', 'false', previousHexKey)).toThrow(StorageCryptoError);
+    expect(() => decodeStoredJson(plaintext, 'backup', id, '', 'true', previousHexKey)).toThrow(StorageCryptoError);
   });
 
   it('preserves no-key plaintext mode but requires an explicit migration opt-in with a key', () => {

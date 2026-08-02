@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: live-provider-dry-run
+  cancel-in-progress: false
+
 jobs:
   dry-run:
     name: Authorized non-mutating provider drill
@@ -59,9 +63,9 @@ jobs:
           done
           sed -E 's/(Bearer |accessToken|apiKey|clientSecret|refreshToken)[^[:space:]]*/[REDACTED]/g' "$temporary_root/api.log"
           exit 1
-      # v4.6.2, pinned to an immutable commit.
+      # v7.0.1, pinned to an immutable commit and running on Node 24.
       - name: Retain non-secret live-provider evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: live-provider-dry-run-evidence-${{ github.run_attempt }}
           path: ${{ runner.temp }}/watchbridge-live-provider-evidence.json

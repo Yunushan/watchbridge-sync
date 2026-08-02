@@ -18,6 +18,7 @@
 - Bounded connector/OAuth timeouts, safe idempotent-read retries, abort handling, and sanitized provider errors.
 - API, CLI, and web metadata/recommendation workflows, support-summary API/CLI output, and registry-derived web percentages.
 - Optional authenticated encryption for new file-backed backups and audit jobs, with explicit one-time plaintext migration.
+- Controlled storage-key rotation with one active key plus one previous key, readiness validation, and read-time re-encryption for retained records.
 - User-controlled Letterboxd ratings/watched/watchlist/reviews target-file generation through API, offline CLI, and web download, with movie-only and lossy-input rejection plus 1,000,000-byte CSV chunking.
 - Trakt current-user review export and constrained review creation, plus authenticated following/follower export and additive verified public-profile following; followers remain read-only.
 - Opt-in retention and explicit dry-run/confirmed cleanup for jobs and backups, with pending-job protection, retained-job reference preservation, and corrupt-inventory fail-closed behavior.

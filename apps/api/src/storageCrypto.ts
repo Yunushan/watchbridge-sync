@@ -113,10 +113,16 @@ export function encodeStoredJson(
   kind: StorageRecordKind,
   id: string,
   configuredKey: string | undefined = process.env.WATCHBRIDGE_STORAGE_KEY,
-  configuredMigrationOptIn: string | undefined = process.env.WATCHBRIDGE_ALLOW_PLAINTEXT_STORAGE_MIGRATION
+  configuredMigrationOptIn: string | undefined = process.env.WATCHBRIDGE_ALLOW_PLAINTEXT_STORAGE_MIGRATION,
+  previousConfiguredKey: string | undefined = process.env.WATCHBRIDGE_STORAGE_KEY_PREVIOUS,
 ): string {
   const allowPlaintextMigration = parsePlaintextMigrationOptIn(configuredMigrationOptIn);
   const key = parseStorageKey(configuredKey);
+  const previousKey = parseStorageKey(previousConfiguredKey);
+  if (!key && previousKey) {
+    previousKey.fill(0);
+    throw new StorageCryptoError();
+  }
   if (!key) {
     if (allowPlaintextMigration) throw new StorageCryptoError();
     return plaintext;
@@ -140,6 +146,7 @@ export function encodeStoredJson(
     throw new StorageCryptoError();
   } finally {
     key.fill(0);
+    previousKey?.fill(0);
     nonce.fill(0);
   }
 }
@@ -149,15 +156,22 @@ export function decodeStoredJson(
   kind: StorageRecordKind,
   id: string,
   configuredKey: string | undefined = process.env.WATCHBRIDGE_STORAGE_KEY,
-  configuredMigrationOptIn: string | undefined = process.env.WATCHBRIDGE_ALLOW_PLAINTEXT_STORAGE_MIGRATION
+  configuredMigrationOptIn: string | undefined = process.env.WATCHBRIDGE_ALLOW_PLAINTEXT_STORAGE_MIGRATION,
+  previousConfiguredKey: string | undefined = process.env.WATCHBRIDGE_STORAGE_KEY_PREVIOUS,
 ): DecodedStoredJson {
   const allowPlaintextMigration = parsePlaintextMigrationOptIn(configuredMigrationOptIn);
   const key = parseStorageKey(configuredKey);
+  const previousKey = parseStorageKey(previousConfiguredKey);
+  if (!key && previousKey) {
+    previousKey.fill(0);
+    throw new StorageCryptoError();
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(stored);
   } catch {
     key?.fill(0);
+    previousKey?.fill(0);
     // A persistence record must be JSON whether encryption is configured or not.
     throw new StorageCryptoError();
   }
@@ -165,10 +179,15 @@ export function decodeStoredJson(
   if (!looksLikeEncryptedEnvelope(parsed)) {
     if (key && !allowPlaintextMigration) {
       key.fill(0);
+      previousKey?.fill(0);
       throw new StorageCryptoError();
     }
-    if (!key && allowPlaintextMigration) throw new StorageCryptoError();
+    if (!key && allowPlaintextMigration) {
+      previousKey?.fill(0);
+      throw new StorageCryptoError();
+    }
     key?.fill(0);
+    previousKey?.fill(0);
     return { plaintext: stored, migrationRequired: Boolean(key) };
   }
 
@@ -177,32 +196,45 @@ export function decodeStoredJson(
     envelope = parseEnvelope(parsed);
   } catch {
     key?.fill(0);
+    previousKey?.fill(0);
     throw new StorageCryptoError();
   }
-  if (!key) throw new StorageCryptoError();
+  if (!key) {
+    previousKey?.fill(0);
+    throw new StorageCryptoError();
+  }
 
   let nonce: Buffer | undefined;
   let ciphertext: Buffer | undefined;
   let tag: Buffer | undefined;
+  let plaintext: Buffer | undefined;
   try {
     nonce = strictBase64Url(envelope.nonce, NONCE_BYTES);
     ciphertext = strictBase64Url(envelope.ciphertext);
     tag = strictBase64Url(envelope.tag, AUTH_TAG_BYTES);
-    const decipher = createDecipheriv('aes-256-gcm', key, nonce, { authTagLength: AUTH_TAG_BYTES });
-    decipher.setAAD(associatedData(kind, id));
-    decipher.setAuthTag(tag);
-    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    try {
-      return { plaintext: plaintext.toString('utf8'), migrationRequired: false };
-    } finally {
-      plaintext.fill(0);
-    }
+    const decrypt = (candidate: Buffer): Buffer | undefined => {
+      try {
+        const decipher = createDecipheriv('aes-256-gcm', candidate, nonce!, { authTagLength: AUTH_TAG_BYTES });
+        decipher.setAAD(associatedData(kind, id));
+        decipher.setAuthTag(tag!);
+        return Buffer.concat([decipher.update(ciphertext!), decipher.final()]);
+      } catch {
+        return undefined;
+      }
+    };
+    plaintext = decrypt(key);
+    const migratedFromPreviousKey = plaintext === undefined && previousKey !== undefined;
+    if (plaintext === undefined && previousKey) plaintext = decrypt(previousKey);
+    if (plaintext === undefined) throw new StorageCryptoError();
+    return { plaintext: plaintext.toString('utf8'), migrationRequired: migratedFromPreviousKey };
   } catch {
     throw new StorageCryptoError();
   } finally {
     key.fill(0);
+    previousKey?.fill(0);
     nonce?.fill(0);
     ciphertext?.fill(0);
     tag?.fill(0);
+    plaintext?.fill(0);
   }
 }

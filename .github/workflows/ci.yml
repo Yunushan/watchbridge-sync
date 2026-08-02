@@ -115,6 +115,11 @@ jobs:
           test "$(docker inspect --format '{{.HostConfig.MemorySwap}}' "$web_id")" -gt 0
           test "$(docker inspect --format '{{.HostConfig.NanoCpus}}' "$web_id")" -gt 0
           test "$(docker inspect --format '{{.HostConfig.PidsLimit}}' "$web_id")" -gt 0
+          for service_id in "$api_id" "$web_id"; do
+            test "$(docker inspect --format '{{.HostConfig.LogConfig.Type}}' "$service_id")" = "json-file"
+            test "$(docker inspect --format '{{index .HostConfig.LogConfig.Config "max-size"}}' "$service_id")" = "10m"
+            test "$(docker inspect --format '{{index .HostConfig.LogConfig.Config "max-file"}}' "$service_id")" = "5"
+          done
           docker compose -f docker-compose.production.yml exec --no-TTY api node --eval "for (const dependency of ['typescript', 'vitest', 'tsx']) { try { require.resolve(dependency); throw new Error('development dependency present: ' + dependency); } catch (error) { if (error instanceof Error && error.message.startsWith('development dependency present:')) throw error; } }"
           headers="$(curl --silent --show-error --dump-header - --output /dev/null http://127.0.0.1:8080/)"
           printf '%s\n' "$headers" | grep --quiet '^Content-Security-Policy: default-src'
@@ -262,9 +267,9 @@ jobs:
             '{schema: $schema, commit: $commit, workflow: $workflow, runId: $run_id, runAttempt: $run_attempt, generatedAt: $generated_at, proxySmoke: "passed", encryptedRestartRecovery: "passed", encryptedVolumeRecovery: "passed"}' \
             > evidence/production-recovery-evidence.json
           node scripts/verify-production-recovery-evidence.mjs evidence/production-recovery-evidence.json
-      # v4.6.2, pinned to an immutable commit.
+      # v7.0.1, pinned to an immutable commit and running on Node 24.
       - name: Retain production recovery evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: production-recovery-evidence-${{ github.run_attempt }}
           path: evidence/production-recovery-evidence.json
