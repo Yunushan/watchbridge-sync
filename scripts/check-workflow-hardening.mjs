@@ -131,6 +131,7 @@ if (
     releaseWorkflow,
   ) ||
   !/gh release create/.test(releaseWorkflow) ||
+  !/environment:\s*\n\s+name:\s+production-release/.test(releaseWorkflow) ||
   !/attestations:\s*write/.test(releaseWorkflow) ||
   !/id-token:\s*write/.test(releaseWorkflow) ||
   !/Gate release on the shipped production containers/.test(releaseWorkflow) ||
