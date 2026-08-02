@@ -82,7 +82,7 @@ if (
   !/verify-production-recovery-evidence\.mjs evidence\/production-recovery-evidence\.json/.test(
     ciWorkflow,
   ) ||
-  !/actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/.test(
+  !/actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/.test(
     ciWorkflow,
   ) ||
   !/retention-days: 30/.test(ciWorkflow) ||
@@ -173,7 +173,7 @@ if (
   !/WATCHBRIDGE_LIVE_EVIDENCE_PATH/.test(liveProviderWorkflow) ||
   !/WATCHBRIDGE_LIVE_EVIDENCE_COMMIT/.test(liveProviderWorkflow) ||
   !/test -s "\$WATCHBRIDGE_LIVE_EVIDENCE_PATH"/.test(liveProviderWorkflow) ||
-  !/actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/.test(
+  !/actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/.test(
     liveProviderWorkflow,
   ) ||
   !/retention-days: 30/.test(liveProviderWorkflow) ||
