@@ -2075,9 +2075,17 @@ export async function apiReady(): Promise<boolean> {
     apiMaxConcurrentRequests();
     apiMaxConcurrentSyncs();
     const storageKey = parseStorageKey(process.env.WATCHBRIDGE_STORAGE_KEY);
+    const previousStorageKey = parseStorageKey(
+      process.env.WATCHBRIDGE_STORAGE_KEY_PREVIOUS,
+    );
+    if (previousStorageKey && !storageKey) {
+      previousStorageKey.fill(0);
+      return false;
+    }
     if (process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR && !storageKey)
       return false;
     storageKey?.fill(0);
+    previousStorageKey?.fill(0);
     storageRetentionPolicy();
     const scopes = configured.length ? configured : [DEFAULT_TENANT];
     const directories = scopes.flatMap((tenant) => [
@@ -2161,17 +2169,17 @@ async function readOAuthVaultRecord(
 ): Promise<OAuthVaultRecord | undefined> {
   if (!isBackupId(id)) return undefined;
   try {
-    const stored = await readFile(
-      join(oauthVaultDirectory(), `${id}.json`),
-      "utf8",
-    );
+    const path = join(oauthVaultDirectory(), `${id}.json`);
+    const stored = await readFile(path, "utf8");
     const decoded = decodeStoredJson(
       stored,
       "oauth-vault",
       storageRecordId(id),
     );
-    if (decoded.migrationRequired) return undefined;
-    return parseOAuthVaultRecord(JSON.parse(decoded.plaintext), id);
+    const record = parseOAuthVaultRecord(JSON.parse(decoded.plaintext), id);
+    if (record && decoded.migrationRequired)
+      await rewriteMigratedStorageFile(path, decoded.plaintext, "oauth-vault", id);
+    return record;
   } catch {
     return undefined;
   }
@@ -2870,7 +2878,7 @@ function parseStoredSyncJob(
 async function rewriteMigratedStorageFile(
   path: string,
   plaintext: string,
-  kind: "backup" | "job",
+  kind: "backup" | "job" | "oauth-vault",
   id: string,
 ): Promise<void> {
   const encrypted = encodeStoredJson(plaintext, kind, storageRecordId(id));

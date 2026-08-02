@@ -60,6 +60,7 @@ afterEach(async () => {
   delete process.env.WATCHBRIDGE_MAX_CONCURRENT_REQUESTS;
   delete process.env.WATCHBRIDGE_MAX_CONCURRENT_SYNCS;
   delete process.env.WATCHBRIDGE_STORAGE_KEY;
+  delete process.env.WATCHBRIDGE_STORAGE_KEY_PREVIOUS;
   delete process.env.WATCHBRIDGE_OAUTH_VAULT_DIR;
   delete process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR;
   delete process.env.WATCHBRIDGE_ALLOW_PLAINTEXT_STORAGE_MIGRATION;
@@ -155,9 +156,13 @@ describe("API health and readiness", () => {
     process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR = transactionDirectory;
     process.env.WATCHBRIDGE_STORAGE_KEY = "01".repeat(32);
     process.env.WATCHBRIDGE_API_KEY = "short-key";
+    process.env.WATCHBRIDGE_STORAGE_KEY_PREVIOUS = "02".repeat(32);
 
     try {
       expect((await app.request("/readyz")).status).toBe(503);
+      delete process.env.WATCHBRIDGE_STORAGE_KEY;
+      expect((await app.request("/readyz")).status).toBe(503);
+      process.env.WATCHBRIDGE_STORAGE_KEY = "01".repeat(32);
       process.env.WATCHBRIDGE_API_KEY = "k".repeat(32);
       expect((await app.request("/readyz")).status).toBe(200);
     } finally {
@@ -3828,6 +3833,7 @@ describe("sync execution endpoint", () => {
       `${result.targetBackupArtifact.id}.json`,
     );
     const jobPath = join(jobDirectory, `${result.job.id}.json`);
+    const originalBackupEnvelope = await readFile(backupPath, "utf8");
 
     process.env.WATCHBRIDGE_STORAGE_KEY = "02".repeat(32);
     expect(
@@ -3846,7 +3852,18 @@ describe("sync execution endpoint", () => {
       404,
     );
 
-    process.env.WATCHBRIDGE_STORAGE_KEY = "01".repeat(32);
+    process.env.WATCHBRIDGE_STORAGE_KEY = "02".repeat(32);
+    process.env.WATCHBRIDGE_STORAGE_KEY_PREVIOUS = "01".repeat(32);
+    expect(
+      (await app.request(`/v1/backups/${result.targetBackupArtifact.id}`))
+        .status,
+    ).toBe(200);
+    expect((await app.request(`/v1/sync/jobs/${result.job.id}`)).status).toBe(
+      200,
+    );
+    expect(await readFile(backupPath, "utf8")).not.toBe(originalBackupEnvelope);
+    delete process.env.WATCHBRIDGE_STORAGE_KEY_PREVIOUS;
+
     for (const path of [backupPath, jobPath]) {
       const envelope = JSON.parse(await readFile(path, "utf8")) as Record<
         string,

@@ -71,6 +71,7 @@ const sharedTransactionDirectories: string[] = [];
 afterEach(async () => {
   delete process.env.WATCHBRIDGE_OAUTH_TRANSACTION_DIR;
   delete process.env.WATCHBRIDGE_STORAGE_KEY;
+  delete process.env.WATCHBRIDGE_STORAGE_KEY_PREVIOUS;
   await Promise.all(sharedTransactionDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 

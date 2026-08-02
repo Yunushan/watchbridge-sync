@@ -58,7 +58,7 @@ For `WatchBridgeSyncExecutionSaturated` or `WatchBridgeApiRequestCapacitySaturat
 5. Run a dry-run against a disposable provider account and review the resulting evidence before enabling writes.
 6. Retain the recovery timestamp, release tag, volume identifier, checks performed, and operator identity without recording tokens or vault contents.
 
-Application-level encryption protects record contents, not filenames, sizes, timestamps, or the availability of the storage key. Key rotation currently requires decrypting retained records and explicitly re-encrypting them under the replacement key; schedule and test that procedure before changing the active key.
+Application-level encryption protects record contents, not filenames, sizes, timestamps, or the availability of the storage key. For rotation, keep the replacement in `WATCHBRIDGE_STORAGE_KEY` and the retired key in `WATCHBRIDGE_STORAGE_KEY_PREVIOUS` until every retained record has been read and rewritten. Only one previous key is supported; keep retired-key escrow until the retention window expires.
 
 ## Release and rollback
 
@@ -81,4 +81,3 @@ If a token, API key, storage key, or TLS private key may have been exposed:
 3. Treat a lost storage key as a data-availability incident and use the escrow/recovery procedure.
 4. Review job records, provider audit history, proxy request IDs, and deployment logs for unauthorized activity.
 5. Report the vulnerability privately through the process in `SECURITY.md`; do not publish credentials or sensitive evidence in an issue or pull request.
-
