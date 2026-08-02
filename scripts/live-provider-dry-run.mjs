@@ -1,11 +1,10 @@
 import { writeFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
 
 const requestSource = process.env.WATCHBRIDGE_LIVE_SYNC_REQUEST;
 const apiKey = process.env.WATCHBRIDGE_LIVE_API_KEY;
 const apiUrl = process.env.WATCHBRIDGE_LIVE_API_URL;
-const evidencePath = process.env.WATCHBRIDGE_LIVE_EVIDENCE_PATH;
 const evidenceCommit = process.env.WATCHBRIDGE_LIVE_EVIDENCE_COMMIT;
+const EVIDENCE_FILE = ".watchbridge-live-provider-evidence.json";
 
 function requiredSecret(value, name) {
   if (typeof value !== "string" || !value.trim()) {
@@ -79,31 +78,7 @@ function liveSyncRequest(value) {
 }
 
 async function writeEvidence(request, actionGroups) {
-  if (evidencePath === undefined || evidencePath === "") return;
-  if (typeof evidencePath !== "string" || evidencePath.includes("\0")) {
-    throw new Error("WATCHBRIDGE_LIVE_EVIDENCE_PATH must be a valid file path.");
-  }
-  const runnerTemp = process.env.RUNNER_TEMP;
-  if (typeof runnerTemp !== "string" || !runnerTemp.trim()) {
-    throw new Error(
-      "RUNNER_TEMP must be configured before writing live-provider evidence.",
-    );
-  }
-  const evidenceRoot = resolve(runnerTemp);
-  const safeEvidencePath = resolve(evidencePath);
-  const relativeEvidencePath = relative(evidenceRoot, safeEvidencePath);
-  if (
-    !isAbsolute(evidenceRoot) ||
-    !isAbsolute(safeEvidencePath) ||
-    relativeEvidencePath === "" ||
-    relativeEvidencePath === "." ||
-    relativeEvidencePath.startsWith("..") ||
-    isAbsolute(relativeEvidencePath)
-  ) {
-    throw new Error(
-      "WATCHBRIDGE_LIVE_EVIDENCE_PATH must remain inside RUNNER_TEMP.",
-    );
-  }
+  if (evidenceCommit === undefined || evidenceCommit === "") return;
   if (
     typeof evidenceCommit !== "string" ||
     !/^[0-9a-f]{40}$/i.test(evidenceCommit)
@@ -121,7 +96,7 @@ async function writeEvidence(request, actionGroups) {
     dryRun: true,
     actionGroups,
   };
-  await writeFile(safeEvidencePath, `${JSON.stringify(evidence)}\n`, {
+  await writeFile(EVIDENCE_FILE, `${JSON.stringify(evidence)}\n`, {
     encoding: "utf8",
     mode: 0o600,
   });

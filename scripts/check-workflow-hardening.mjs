@@ -170,9 +170,12 @@ if (
     liveProviderWorkflow,
   ) ||
   !/node scripts\/live-provider-dry-run\.mjs/.test(liveProviderWorkflow) ||
-  !/WATCHBRIDGE_LIVE_EVIDENCE_PATH/.test(liveProviderWorkflow) ||
+  /WATCHBRIDGE_LIVE_EVIDENCE_PATH/.test(liveProviderWorkflow) ||
+  !/\.watchbridge-live-provider-evidence\.json/.test(liveProviderWorkflow) ||
   !/WATCHBRIDGE_LIVE_EVIDENCE_COMMIT/.test(liveProviderWorkflow) ||
-  !/test -s "\$WATCHBRIDGE_LIVE_EVIDENCE_PATH"/.test(liveProviderWorkflow) ||
+  !/test -s "\.watchbridge-live-provider-evidence\.json"/.test(
+    liveProviderWorkflow,
+  ) ||
   !/actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a/.test(
     liveProviderWorkflow,
   ) ||
