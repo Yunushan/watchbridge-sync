@@ -173,6 +173,7 @@ docs                      Architecture, deployment, safety, and roadmap docs
 - [Architecture](docs/ARCHITECTURE.md)
 - [Connector capabilities](docs/CONNECTOR_CAPABILITIES.md)
 - [Deployment](docs/DEPLOYMENT.md)
+- [Operations runbook](docs/OPERATIONS_RUNBOOK.md)
 - [Example syncs](docs/EXAMPLE_SYNCS.md)
 - [Import/export formats](docs/IMPORT_EXPORT_FORMATS.md)
 - [Manual CSV import](docs/MANUAL_CSV_IMPORT.md)
