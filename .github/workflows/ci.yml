@@ -229,7 +229,10 @@ jobs:
             fi
             sleep 2
           done
-          test "$edge_healthy" = 1
+          if test "$edge_healthy" != 1; then
+            docker compose -f docker-compose.production.yml -f docker-compose.tls.yml logs --no-color edge || true
+            exit 1
+          fi
           https_headers="$(curl --insecure --silent --show-error --dump-header - --output /dev/null https://127.0.0.1:18443/)"
           printf '%s\n' "$https_headers" | grep --quiet '^HTTP/1.1 200'
           printf '%s\n' "$https_headers" | grep --quiet '^Strict-Transport-Security: max-age=31536000'

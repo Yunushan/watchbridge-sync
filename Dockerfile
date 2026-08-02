@@ -12,7 +12,9 @@ RUN --mount=type=secret,id=watchbridge_registry_ca,required=false,target=/run/se
 ENV NODE_OPTIONS=--use-system-ca
 
 WORKDIR /workspace
-RUN corepack enable
+# Node 25 no longer ships Corepack. Install the locked package manager
+# explicitly so the build remains reproducible across supported Node images.
+RUN npm install --global --no-fund --no-audit pnpm@9.15.0
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
@@ -38,6 +40,12 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# npm is a build-time tool only. Removing it from the runtime image keeps the
+# deployed attack surface small and prevents vulnerabilities in npm's bundled
+# transitive dependencies from shipping with the API.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+
 ENV NODE_ENV=production \
     NODE_OPTIONS=--use-system-ca \
     WATCHBRIDGE_PORT=8080 \
@@ -59,8 +67,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:8080/readyz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 CMD ["node", "dist/server.js"]
 
-# nginx:1.27-alpine, pinned to its Docker Hub multi-platform manifest.
-FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS web
+# nginx:1.31-alpine, pinned to its Docker Hub multi-platform manifest.
+FROM nginx:1.31-alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752 AS web
 
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/security.txt /etc/nginx/security.txt
@@ -72,8 +80,10 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
 ENTRYPOINT ["nginx", "-g", "daemon off;"]
 
 # Optional public TLS edge. Certificates arrive only as Compose secrets at
-# runtime, never through the build context or image layers.
-FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 AS edge
+# runtime, never through the build context or image layers. The Compose TLS
+# profile elevates only the master process long enough to read file-backed
+# secrets; nginx workers drop to the nginx account in docker/nginx-edge.conf.
+FROM nginx:1.31-alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752 AS edge
 
 COPY docker/nginx-edge.conf /etc/nginx/nginx.conf
 EXPOSE 8080 8443
