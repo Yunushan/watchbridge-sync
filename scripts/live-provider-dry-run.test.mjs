@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
 
 function runRunner(environment) {
@@ -58,9 +58,10 @@ test("live-provider runner submits only a dry-run to a loopback API without logg
   const providerToken = "live-provider-token-that-must-not-be-logged";
   const apiKey = "loopback-api-key";
   const evidencePath = join(
-    await mkdtemp(join(tmpdir(), "watchbridge-live-evidence-")),
-    "evidence.json",
+    process.cwd(),
+    ".watchbridge-live-provider-evidence.json",
   );
+  await rm(evidencePath, { force: true });
   let received;
   const server = createServer(async (request, response) => {
     let body = "";
@@ -83,8 +84,6 @@ test("live-provider runner submits only a dry-run to a loopback API without logg
     const result = await runRunner({
       WATCHBRIDGE_LIVE_API_URL: `http://127.0.0.1:${port}`,
       WATCHBRIDGE_LIVE_API_KEY: apiKey,
-      WATCHBRIDGE_LIVE_EVIDENCE_PATH: evidencePath,
-      RUNNER_TEMP: dirname(evidencePath),
       WATCHBRIDGE_LIVE_EVIDENCE_COMMIT: "a".repeat(40),
       WATCHBRIDGE_LIVE_SYNC_REQUEST: JSON.stringify({
         source: "trakt",
@@ -120,6 +119,7 @@ test("live-provider runner submits only a dry-run to a loopback API without logg
     assert.doesNotMatch(JSON.stringify(evidence), new RegExp(providerToken));
   } finally {
     await close(server);
+    await rm(evidencePath, { force: true });
   }
 });
 

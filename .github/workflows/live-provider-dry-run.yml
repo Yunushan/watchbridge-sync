@@ -49,14 +49,13 @@ jobs:
           export WATCHBRIDGE_OAUTH_VAULT_DIR="$temporary_root/vault"
           export WATCHBRIDGE_LIVE_API_URL=http://127.0.0.1:18080
           export WATCHBRIDGE_LIVE_API_KEY="$WATCHBRIDGE_API_KEY"
-          export WATCHBRIDGE_LIVE_EVIDENCE_PATH="$RUNNER_TEMP/watchbridge-live-provider-evidence.json"
           export WATCHBRIDGE_LIVE_EVIDENCE_COMMIT="$GITHUB_SHA"
           node apps/api/dist/server.js >"$temporary_root/api.log" 2>&1 &
           api_pid=$!
           for attempt in {1..30}; do
             if curl --fail --silent --show-error http://127.0.0.1:18080/readyz > /dev/null; then
               node scripts/live-provider-dry-run.mjs
-              test -s "$WATCHBRIDGE_LIVE_EVIDENCE_PATH"
+              test -s ".watchbridge-live-provider-evidence.json"
               exit 0
             fi
             sleep 1
@@ -68,6 +67,6 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: live-provider-dry-run-evidence-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/watchbridge-live-provider-evidence.json
+          path: .watchbridge-live-provider-evidence.json
           if-no-files-found: error
           retention-days: 30
