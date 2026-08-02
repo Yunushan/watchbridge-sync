@@ -108,13 +108,13 @@ test("live-provider runner submits only a dry-run to a loopback API without logg
     );
     const evidence = JSON.parse(await readFile(evidencePath, "utf8"));
     assert.deepEqual(evidence, {
-      schema: "watchbridge.live-provider-dry-run-evidence.v1",
+      schema: "watchbridge.live-provider-dry-run-evidence.v2",
       commit: "a".repeat(40),
       generatedAt: evidence.generatedAt,
       source: "trakt",
       target: "tmdb",
       dryRun: true,
-      actionGroups: 1,
+      responseValidated: true,
     });
     assert.doesNotMatch(JSON.stringify(evidence), new RegExp(providerToken));
   } finally {
