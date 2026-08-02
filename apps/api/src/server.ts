@@ -314,24 +314,34 @@ function storageRecordId(id: string): string {
   return tenant.storageSubdirectory ? `${tenant.id}:${id}` : id;
 }
 
+interface EncodedAuthorization {
+  bytes: Buffer;
+  valid: boolean;
+}
+
+function encodeAuthorization(value: string): EncodedAuthorization {
+  const bytes = Buffer.from(value, "utf8");
+  const fixed = Buffer.alloc(MAX_AUTHORIZATION_BYTES);
+  const valid = bytes.length <= MAX_AUTHORIZATION_BYTES;
+  bytes.copy(fixed, 0, 0, Math.min(bytes.length, MAX_AUTHORIZATION_BYTES));
+  return { bytes: fixed, valid };
+}
+
 function authorizedApiRequest(
-  authorization: string | undefined,
+  supplied: EncodedAuthorization,
   apiKey: string,
+  expected: Buffer,
 ): boolean {
-  const encode = (value: string): { bytes: Buffer; valid: boolean } => {
-    const bytes = Buffer.from(value, "utf8");
-    const fixed = Buffer.alloc(MAX_AUTHORIZATION_BYTES);
-    const valid = bytes.length <= MAX_AUTHORIZATION_BYTES;
-    bytes.copy(fixed, 0, 0, Math.min(bytes.length, MAX_AUTHORIZATION_BYTES));
-    return { bytes: fixed, valid };
-  };
-  const supplied = encode(authorization ?? "");
-  const expected = encode(`Bearer ${apiKey}`);
-  return (
-    supplied.valid &&
-    expected.valid &&
-    timingSafeEqual(supplied.bytes, expected.bytes)
+  const expectedBytes = Buffer.from(`Bearer ${apiKey}`, "utf8");
+  const valid = expectedBytes.length <= MAX_AUTHORIZATION_BYTES;
+  expected.fill(0);
+  expectedBytes.copy(
+    expected,
+    0,
+    0,
+    Math.min(expectedBytes.length, MAX_AUTHORIZATION_BYTES),
   );
+  return supplied.valid && valid && timingSafeEqual(supplied.bytes, expected);
 }
 
 function authenticatedTenant(
@@ -339,9 +349,16 @@ function authenticatedTenant(
 ): TenantScope | undefined {
   const configured = configuredTenants();
   if (!configured.length) return DEFAULT_TENANT;
-  return configured.find((tenant) =>
-    authorizedApiRequest(authorization, tenant.apiKey!),
-  );
+  const supplied = encodeAuthorization(authorization ?? "");
+  const expected = Buffer.alloc(MAX_AUTHORIZATION_BYTES);
+  try {
+    return configured.find((tenant) =>
+      authorizedApiRequest(supplied, tenant.apiKey!, expected),
+    );
+  } finally {
+    supplied.bytes.fill(0);
+    expected.fill(0);
+  }
 }
 
 function productionTenantConfigurationValid(): boolean {
