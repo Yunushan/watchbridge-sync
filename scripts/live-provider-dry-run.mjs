@@ -77,7 +77,7 @@ function liveSyncRequest(value) {
   return { ...request, source, target };
 }
 
-async function writeEvidence(request, actionGroups) {
+async function writeEvidence(request) {
   if (evidenceCommit === undefined || evidenceCommit === "") return;
   if (
     typeof evidenceCommit !== "string" ||
@@ -88,13 +88,13 @@ async function writeEvidence(request, actionGroups) {
     );
   }
   const evidence = {
-    schema: "watchbridge.live-provider-dry-run-evidence.v1",
+    schema: "watchbridge.live-provider-dry-run-evidence.v2",
     commit: evidenceCommit,
     generatedAt: new Date().toISOString(),
     source: request.source,
     target: request.target,
     dryRun: true,
-    actionGroups,
+    responseValidated: true,
   };
   await writeFile(EVIDENCE_FILE, `${JSON.stringify(evidence)}\n`, {
     encoding: "utf8",
@@ -145,7 +145,7 @@ if (
   );
 }
 
-await writeEvidence(request, result.actions.length);
+await writeEvidence(request);
 
 console.log(
   `Live-provider dry run completed safely for ${request.source} -> ${request.target} with ${result.actions.length} previewed or skipped action groups.`,
