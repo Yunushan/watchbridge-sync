@@ -6,6 +6,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: live-provider-dry-run
+  cancel-in-progress: false
+
 jobs:
   dry-run:
     name: Authorized non-mutating provider drill

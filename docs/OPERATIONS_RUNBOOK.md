@@ -70,7 +70,7 @@ Application-level encryption protects record contents, not filenames, sizes, tim
 
 ## Live-provider evidence
 
-The `live-provider-smoke` workflow requires an approved environment and the protected `WATCHBRIDGE_LIVE_SYNC_REQUEST` secret. Use only a disposable or explicitly authorized non-production account pair. The request must set `dryRun: true` and must not set `confirmWrite: true`. Review the retained non-secret evidence and provider audit logs; this drill does not certify a real write or recovery path.
+The `live-provider-smoke` workflow requires an approved environment and the protected `WATCHBRIDGE_LIVE_SYNC_REQUEST` secret. Runs are serialized so two drills cannot exercise the same disposable account concurrently. Use only a disposable or explicitly authorized non-production account pair. The request must set `dryRun: true` and must not set `confirmWrite: true`. Review the retained non-secret evidence and provider audit logs; this drill does not certify a real write or recovery path.
 
 ## Security incident response
 
