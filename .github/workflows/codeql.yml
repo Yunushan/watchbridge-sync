@@ -24,14 +24,14 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           persist-credentials: false
-      # v4.37.1, pinned to an immutable commit. Init and analyze must match.
+      # v4.37.4, pinned to an immutable commit. Init and analyze must match.
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a
+        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38
         with:
           languages: javascript-typescript
           queries: security-extended
-      # v4.37.1, pinned to an immutable commit. Init and analyze must match.
+      # v4.37.4, pinned to an immutable commit. Init and analyze must match.
       - name: Analyze code
-        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a
+        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38
         with:
           category: /language:javascript-typescript
