@@ -82,11 +82,14 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
+      # Build dependency declarations before isolated workspace linting. Packages
+      # such as connectors import @watchbridge/core through its package exports;
+      # a clean checkout has no declaration output until the dependency build runs.
+      - run: pnpm -r --sort build
       - run: pnpm -r --sort lint
       - run: pnpm check:test-inventory
       - run: pnpm check:monitoring
       - run: pnpm -r test
-      - run: pnpm -r --sort build
 
   container-smoke:
     needs: validate
