@@ -10,6 +10,7 @@
 
 Release archive checksum and provenance verification are documented in [Release verification](docs/RELEASES.md).
 Production metrics, Prometheus scraping, and alert rules are documented in [Deployment](docs/DEPLOYMENT.md).
+The complete repository-versus-deployment readiness gate is in [Production readiness](docs/PRODUCTION_READINESS.md).
 ![node](https://img.shields.io/badge/node-%3E%3D24-339933?logo=node.js&logoColor=white)
 ![pnpm](https://img.shields.io/badge/pnpm-%3E%3D9-f69220?logo=pnpm&logoColor=white)
 
@@ -41,6 +42,7 @@ pnpm install
 pnpm lint
 pnpm test
 pnpm build
+pnpm smoke:production-capacity
 pnpm dev
 ```
 
@@ -83,15 +85,15 @@ watchbridge cleanup-storage cleanup-request.json
 - Guarded non-destructive restore for saved official-connector backups.
 - Thirteen tested direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, Shikimori, Annict, anime-only Bangumi, user-selected Jellyfin and Emby servers, one explicitly scoped Kodi library/profile, one selected Plex Media Server, a user-selected Movary API server/account, and AniList. AniList supports exact-ID anime/manga media-list ratings, watched/progress, planned watchlists, reviews, and a guarded social graph; Movary is movie-only and preserves only dated single-play history and watchlist membership. Their registered feature sets and fidelity limits differ.
 - State-verified authorization API, CLI, and web flows for TMDb, Trakt, Simkl, MyAnimeList, Shikimori, and Annict, including the supported refresh or revocation paths. Bangumi, Jellyfin, Emby, Kodi, Plex, and Movary use documented caller-provided request contexts; WatchBridge does not persist their credentials or invent a third-party sign-in helper.
-- Strict API/CLI/web backup-v1 imports for IMDb, Letterboxd, and MovieLens files.
+- Strict API/CLI/web backup-v1 imports for IMDb, Letterboxd, MovieLens, and Ryot files.
 - Configurable CSV import for user-owned exports from the 13 registered manual-mapping services, without scraping or browser automation.
 - Web-based one-way/two-way direct-account sync, provider-file conversion, mapped-CSV preview, strict backup upload, file-to-account sync, and authenticated pre-write backup downloads.
 - Backup-first execution preflights every prepared write batch across the selected executable features before the first remote mutation. Durable jobs record `pending`, `succeeded`, or `failed` outcomes and retain pre-write backup/failure details when available.
 - Opt-in backup/job retention with dry-run cleanup, explicit deletion confirmation, pending-job protection, and reference-safe backup preservation.
-- Metadata resolution for TMDb, exact-IMDb-ID OMDb, TVmaze, TheTVDB, and public exact-ID Kitsu anime/manga/episode resources, plus TasteDive recommendations through the API, CLI, and web panel; these do not imply user-account sync. OMDb content and usage carry non-commercial terms constraints.
+- Metadata resolution for TMDb, exact-IMDb-ID OMDb, Watchmode, MDBList movie lookups, TVmaze, TheTVDB, and public exact-ID Kitsu anime/manga/episode resources, plus TasteDive recommendations through the API, CLI, and web panel; these do not imply user-account sync. OMDb content and usage carry non-commercial terms constraints.
 - Bounded outbound timeouts, safe read retries, and sanitized provider errors for connector and OAuth requests.
 - API, web, and CLI applications, with desktop and mobile packaging notes rather than shipped native clients.
-- CI workflow for install, lint, test, and build validation.
+- CI workflow for locked install, lint, test, build, source compatibility on Ubuntu/Windows/macOS, encrypted recovery verification, capacity smoke, container hardening, vulnerability scanning, and TLS/proxy validation.
 - Full README support in English, Turkish, French, and German.
 
 ## Supported Services
@@ -102,6 +104,7 @@ WatchBridge Sync is designed around connector capabilities for:
 |---|---|---|
 | IMDb | TMDb | MyAnimeList |
 |  | OMDb |  |
+|  | MDBList |  |
 | Rotten Tomatoes | TheTVDB | AniList |
 | Letterboxd | TVmaze | Douban Movie |
 | Trakt | JustWatch | Kinopoisk |
@@ -109,6 +112,7 @@ WatchBridge Sync is designed around connector capabilities for:
 | TV Time | AllMovie |  |
 | Metacritic | Criticker |  |
 | MovieLens | Flickchart |  |
+| Ryot |  |  |
 | FilmAffinity | TasteDive |  |
 | Serializd | Taste.io |  |
 | MUBI | Common Sense Media |  |
@@ -117,13 +121,13 @@ WatchBridge Sync is designed around connector capabilities for:
 | Kodi |  | Shikimori |
 | Plex |  | Annict |
 
-All **38/38 (100%)** catalog entries are selectable, but that is not 38 direct integrations. Current registry-derived coverage is **13/38 (34.2%)** direct-account platforms, **7/38 (18.4%)** with registered account read/write methods for the primary ratings, watched/progress, and watchlist families, and **29/38 (76.3%)** with at least one shipped account or file source path. Trakt and AniList are the **2/38 (5.3%)** direct platforms that read all six families and write every mutable family; followers are read-only by design. The mutually exclusive workflow catalog is 13 direct-account, 3 dedicated-file, 7 metadata/recommendation, 13 manual-mapping, and 2 restricted services. TMDb overlaps that workflow view in the cross-cutting metadata/recommendation metric, which is **8/38 (21.1%)**.
+All **40/40 (100%)** catalog entries are selectable, but that is not 40 direct integrations. Current registry-derived coverage is **13/40 (32.5%)** direct-account platforms, **7/40 (17.5%)** with registered account read/write methods for the primary ratings, watched/progress, and watchlist families, and **30/40 (75%)** with at least one shipped account or file source path. Trakt and AniList are the **2/40 (5%)** direct platforms that read all six families and write every mutable family; followers are read-only by design. The mutually exclusive workflow catalog is 13 direct-account, 4 dedicated-file, 8 metadata/recommendation, 13 manual-mapping, and 2 restricted services. TMDb overlaps that workflow view in the cross-cutting metadata/recommendation metric, which is **9/40 (22.5%)**.
 
-Across the **228** platform × canonical-family slots, **124/228 (54.4%)** source slots are supported and **104/228 (45.6%)** are missing; **36/228 (15.8%)** have verified account writes and **192/228 (84.2%)** do not. Letterboxd's generated import files raise automated target coverage to **40/228 (17.5%)**, with **188/228 (82.5%)** missing. Ratings are **26/38 (68.4%)** source, **10/38 (26.3%)** account-write, and **11/38 (28.9%)** automated-target; watched/progress is **27/38 (71.1%)**, **12/38 (31.6%)**, and **13/38 (34.2%)**; watchlist is **25/38 (65.8%)**, **10/38 (26.3%)**, and **11/38 (28.9%)**; reviews are **16/38 (42.1%)**, **2/38 (5.3%)**, and **3/38 (7.9%)**; following is **15/38 (39.5%)**, **2/38 (5.3%)**, and **2/38 (5.3%)**; followers are **15/38 (39.5%)**, **0/38 (0%)**, and **0/38 (0%)**. Run `watchbridge support-summary`, call `GET /v1/support-summary`, or open the web support panel for the live snapshot.
+Across the **240** platform × canonical-family slots, **127/240 (52.9%)** source slots are supported and **113/240 (47.1%)** are missing; **36/240 (15%)** have verified account writes and **204/240 (85%)** do not. Letterboxd's generated import files raise automated target coverage to **40/240 (16.7%)**, with **200/240 (83.3%)** missing. Ratings are **26/40 (65%)** source, **10/40 (25%)** account-write, and **11/40 (27.5%)** automated-target; watched/progress is **28/40 (70%)**, **12/40 (30%)**, and **13/40 (32.5%)**; watchlist is **26/40 (65%)**, **10/40 (25%)**, and **11/40 (27.5%)**; reviews are **17/40 (42.5%)**, **2/40 (5%)**, and **3/40 (7.5%)**; following is **15/40 (37.5%)**, **2/40 (5%)**, and **2/40 (5%)**; followers are **15/40 (37.5%)**, **0/40 (0%)**, and **0/40 (0%)**. Run `watchbridge support-summary`, call `GET /v1/support-summary`, or open the web support panel for the live snapshot.
 
 File, manual, metadata/recommendation, and restricted workflows are labeled separately. All **6/6 (100%)** canonical families and both **2/2 (100%)** executor direction modes are shipped. That does not make every provider pair writable: two-way requires two live direct-account connectors with registered read/write methods for every selected feature, following is never inferred across providers, followers have no valid write direction, record identity and fidelity checks can reject a particular shape, and backup/file paths remain one-way.
 
-Trakt reads ratings, watched, watchlist, current-user reviews, following, and followers; it writes the first four plus additive following under strict provider checks. Shikimori remains anime/user-rate bounded; Annict supports watched and watchlist but not ratings. Kodi now adds a managed movie watchlist through a library-scoped WatchBridge tag alongside integer ratings and completed movie/exact-episode play counts. Plex is server-scoped ratings plus completed played membership, with a caller-provided token and personal/non-commercial terms caveat. Movary is exact-ID movie history and watchlist only on an owner-selected HTTPS `/api/` server; it rejects replay/progress state and list timestamps it cannot round-trip. Jellyfin supports ratings plus completed watched state, while Emby supports only completed watched membership; favorites and likes are not counted as watchlist on either service. IMDb dedicated files cover ratings, Check-ins watched membership, and watchlist; Letterboxd files and generated targets cover ratings, watched, watchlist, and reviews. OMDb, Watchmode, Wikidata, and Kitsu are metadata-only and contribute no account-sync slots. See [Connector and Runtime Support](docs/CONNECTOR_CAPABILITIES.md) and [Import and Export Formats](docs/IMPORT_EXPORT_FORMATS.md).
+Trakt reads ratings, watched, watchlist, current-user reviews, following, and followers; it writes the first four plus additive following under strict provider checks. Shikimori remains anime/user-rate bounded; Annict supports watched and watchlist but not ratings. Kodi now adds a managed movie watchlist through a library-scoped WatchBridge tag alongside integer ratings and completed movie/exact-episode play counts. Plex is server-scoped ratings plus completed played membership, with a caller-provided token and personal/non-commercial terms caveat. Movary is exact-ID movie history and watchlist only on an owner-selected HTTPS `/api/` server; it rejects replay/progress state and list timestamps it cannot round-trip. Jellyfin supports ratings plus completed watched state, while Emby supports only completed watched membership; favorites and likes are not counted as watchlist on either service. IMDb dedicated files cover ratings, Check-ins watched membership, and watchlist; Letterboxd files and generated targets cover ratings, watched, watchlist, and reviews; Ryot CompleteExport files cover watched/list state and review text with known provider IDs. OMDb, Watchmode, MDBList, Wikidata, TVmaze, TheTVDB, Kitsu, and TasteDive are metadata/recommendation-only and contribute no account-sync slots. MDBList is limited to exact movie metadata by TMDb ID and a request-scoped API key. See [Connector and Runtime Support](docs/CONNECTOR_CAPABILITIES.md) and [Import and Export Formats](docs/IMPORT_EXPORT_FORMATS.md).
 
 ## Rating Example
 
@@ -173,6 +177,7 @@ docs                      Architecture, deployment, safety, and roadmap docs
 - [Architecture](docs/ARCHITECTURE.md)
 - [Connector capabilities](docs/CONNECTOR_CAPABILITIES.md)
 - [Deployment](docs/DEPLOYMENT.md)
+- [GitHub governance](docs/GITHUB_GOVERNANCE.md)
 - [Operations runbook](docs/OPERATIONS_RUNBOOK.md)
 - [Example syncs](docs/EXAMPLE_SYNCS.md)
 - [Import/export formats](docs/IMPORT_EXPORT_FORMATS.md)
@@ -195,6 +200,10 @@ pnpm lint
 pnpm test
 pnpm build
 ```
+
+`pnpm test` includes the operational tests and workspace V8 coverage thresholds. Coverage summaries are written under each workspace's ignored `coverage/` directory and retained by CI.
+
+For an operator recovery check, provide `WATCHBRIDGE_STORAGE_KEY` through the environment and run `node scripts/verify-storage-snapshot.mjs` against a restored data copy. The verifier rejects plaintext or tampered records and can emit a non-secret checksum manifest; see [Operations Runbook](docs/OPERATIONS_RUNBOOK.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 

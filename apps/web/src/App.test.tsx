@@ -29,8 +29,8 @@ describe('App', () => {
     expect(html).toContain('Preview backup restore');
     expect(html).toContain('Load job history');
     expect(html).toContain('Support percentages');
-    expect(html).toContain('38 / 38 platforms');
-    expect(html).toContain('34.2%');
+    expect(html).toContain('40 / 40 platforms');
+    expect(html).toContain('32.5%');
     expect(html).toContain('Account to account sync');
     expect(html).toContain('Preview account sync');
     expect(html).toContain('Source connector context JSON');
@@ -47,6 +47,7 @@ describe('App', () => {
     expect(html).toContain('TVmaze');
     expect(html).toContain('TheTVDB');
     expect(html).toContain('Kitsu');
+    expect(html).toContain('MDBList');
   });
 });
 

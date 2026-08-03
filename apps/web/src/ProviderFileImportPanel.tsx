@@ -2,9 +2,9 @@ import React, { useState, type ChangeEvent } from 'react';
 
 export const MAX_PROVIDER_IMPORT_BYTES = 10 * 1024 * 1024;
 
-const PROVIDERS = ['imdb', 'letterboxd', 'movielens'] as const;
+const PROVIDERS = ['imdb', 'letterboxd', 'movielens', 'ryot'] as const;
 export type ProviderFileService = (typeof PROVIDERS)[number];
-export type ProviderFileKey = 'ratings' | 'watched' | 'watchlist' | 'reviews' | 'movies' | 'links';
+export type ProviderFileKey = 'ratings' | 'watched' | 'watchlist' | 'reviews' | 'movies' | 'links' | 'export';
 
 interface ProviderFileDefinition {
   key: ProviderFileKey;
@@ -28,13 +28,17 @@ const PROVIDER_FILES: Record<ProviderFileService, readonly ProviderFileDefinitio
     { key: 'ratings', label: 'MovieLens ratings.csv', required: true },
     { key: 'movies', label: 'MovieLens movies.csv', required: true },
     { key: 'links', label: 'MovieLens links.csv' }
+  ],
+  ryot: [
+    { key: 'export', label: 'Ryot CompleteExport JSON', required: true }
   ]
 };
 
 const PROVIDER_LABELS: Record<ProviderFileService, string> = {
   imdb: 'IMDb',
   letterboxd: 'Letterboxd',
-  movielens: 'MovieLens'
+  movielens: 'MovieLens',
+  ryot: 'Ryot'
 };
 
 interface LoadedProviderFile {
@@ -108,6 +112,9 @@ export function validateProviderFileSelection(
   }
   if (service === 'movielens' && (!files.ratings || !files.movies)) {
     throw new Error('MovieLens import requires both ratings.csv and movies.csv.');
+  }
+  if (service === 'ryot' && !files.export) {
+    throw new Error('Ryot import requires a CompleteExport JSON file.');
   }
   const combinedBytes = present.reduce((total, [, contents]) => total + byteLength(contents as string), 0);
   if (combinedBytes > MAX_PROVIDER_IMPORT_BYTES) {
@@ -302,7 +309,7 @@ export function ProviderFileImportPanel() {
 
   return <section className="card provider-file-panel">
     <h2>Provider export files to canonical backup</h2>
-    <p>Convert dedicated IMDb, Letterboxd, or MovieLens exports, including IMDb Check-ins and Letterboxd reviews, into a strict <code>watchbridge.backup.v1</code> archive. No scraping or remote account write occurs.</p>
+    <p>Convert dedicated IMDb, Letterboxd, MovieLens, or Ryot exports, including IMDb Check-ins, Letterboxd reviews, and Ryot CompleteExport JSON, into a strict <code>watchbridge.backup.v1</code> archive. No scraping or remote account write occurs.</p>
     <p className="sensitive-warning">File contents and the optional WatchBridge API key stay only in this page's memory and are submitted without browser credentials. Closing or refreshing this page clears them.</p>
 
     <div className="grid">
@@ -326,7 +333,7 @@ export function ProviderFileImportPanel() {
           {definition.label}{definition.required ? ' (required)' : ' (optional)'}
           <input
             type="file"
-            accept="text/csv,.csv"
+            accept={service === 'ryot' ? 'application/json,.json' : 'text/csv,.csv'}
             onChange={(event) => void loadFile(definition.key, event)}
             disabled={reading !== undefined || submitting}
           />
@@ -335,6 +342,7 @@ export function ProviderFileImportPanel() {
       </div>
       <p className="support-footnote">Combined file contents: {combinedBytes.toLocaleString()} / {MAX_PROVIDER_IMPORT_BYTES.toLocaleString()} UTF-8 bytes. The complete serialized request must also stay within 10 MiB.</p>
       {service === 'letterboxd' && <p className="support-footnote">Review text stays in the canonical archive; no review is posted to a remote service unless a future connector explicitly registers a verified writer.</p>}
+      {service === 'ryot' && <p className="support-footnote">Ryot exports do not define a portable rating scale or guaranteed title field. The importer preserves known provider IDs, seen/list state, exact integer episodic progress, and review text; unsupported media families and opaque ratings are intentionally not imported.</p>}
     </fieldset>
 
     <button type="button" onClick={() => void submit()} disabled={submitting || reading !== undefined || Boolean(selectionError)}>

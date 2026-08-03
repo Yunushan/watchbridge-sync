@@ -46,6 +46,14 @@ if (!license.includes('Permission to use, copy, modify, and/or distribute this s
   failures.push('LICENSE: expected 0BSD license text is missing.');
 }
 
+if (packages[0].value.pnpm !== undefined) {
+  failures.push('package.json: pnpm configuration must live in pnpm-workspace.yaml, not the deprecated package manifest field.');
+}
+const workspaceSource = await readFile('pnpm-workspace.yaml', 'utf8');
+if (!/^overrides:\s*\r?\n\s+typescript:\s+5\.7\.3\s*$/m.test(workspaceSource)) {
+  failures.push('pnpm-workspace.yaml: the locked TypeScript override must be declared in the workspace configuration.');
+}
+
 if (failures.length) {
   console.error(['Release metadata check failed:', ...failures.map((failure) => `- ${failure}`)].join('\n'));
   process.exitCode = 1;

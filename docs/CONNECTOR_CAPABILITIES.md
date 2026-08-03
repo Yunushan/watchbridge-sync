@@ -9,22 +9,22 @@ A provider capability never creates a runtime promise. In particular, a provider
 
 ## Current implementation snapshot
 
-- **38/38 (100%)** services are selectable catalog entries; **0/38 (0%)** are missing from the catalog.
-- **13/38 (34.2%)** have repository-tested direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, Shikimori, Annict, Bangumi, Jellyfin, Emby, Kodi, Plex, Movary, and AniList; **25/38 (65.8%)** do not.
-- **3/38 (7.9%)** have dedicated user-file readers: IMDb, Letterboxd, and MovieLens; **35/38 (92.1%)** do not.
-- **7/38 (18.4%)** are metadata/recommendation workflow integrations: OMDb, Watchmode, Wikidata, TVmaze, TheTVDB, TasteDive, and Kitsu; **31/38 (81.6%)** are not in that workflow.
-- **13/38 (34.2%)** use the generic mapped-CSV path when the user has a lawful export; **25/38 (65.8%)** do not.
-- **2/38 (5.3%)** are restricted: Rotten Tomatoes and JustWatch; **36/38 (94.7%)** are not restricted.
+- **40/40 (100%)** services are selectable catalog entries; **0/40 (0%)** are missing from the catalog.
+- **13/40 (32.5%)** have repository-tested direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, Shikimori, Annict, Bangumi, Jellyfin, Emby, Kodi, Plex, Movary, and AniList; **27/40 (67.5%)** do not.
+- **4/40 (10%)** have dedicated user-file readers: IMDb, Letterboxd, MovieLens, and Ryot; **36/40 (90%)** do not.
+- **8/40 (20%)** are metadata/recommendation workflow integrations: OMDb, Watchmode, MDBList, Wikidata, TVmaze, TheTVDB, TasteDive, and Kitsu; **32/40 (80%)** are not in that workflow.
+- **13/40 (32.5%)** use the generic mapped-CSV path when the user has a lawful export; **27/40 (67.5%)** do not.
+- **2/40 (5%)** are restricted: Rotten Tomatoes and JustWatch; **38/40 (95%)** are not restricted.
 
 Additional completion views, derived from the same registry:
 
-- **7/38 (18.4%)** register direct account read and write methods for the primary ratings, watched/progress, and watchlist families: Trakt, Simkl, MyAnimeList, Shikimori, Bangumi, Kodi, and AniList; **31/38 (81.6%)** do not. This is method coverage, not a promise that every cross-provider record has sufficient identity or lossless shape to write.
-- **2/38 (5.3%)** register reads for all six canonical families and writes for every mutable family: Trakt and AniList. The other **36/38 (94.7%)** do not. Followers are excluded from the mutable-family requirement because follower membership has no valid write operation.
-- **29/38 (76.3%)** have at least one shipped account or file source path. The missing **9/38 (23.7%)** are the seven metadata/recommendation workflow entries and two restricted entries.
-- **8/38 (21.1%)** expose metadata resolution or recommendations: TMDb, OMDb, Watchmode, Wikidata, TVmaze, TheTVDB, TasteDive, and Kitsu. This cross-cutting metric overlaps the mutually exclusive workflow categories because TMDb is a direct-account platform.
-- Across the **228** platform × canonical-family source slots, **124/228 (54.4%)** are readable through an account/file path and **104/228 (45.6%)** are missing.
-- Across the same **228** target slots, **36/228 (15.8%)** have a verified account write and **192/228 (84.2%)** do not. Four Letterboxd slots generate user-controlled import files, so total automated target coverage is **40/228 (17.5%)** and **188/228 (82.5%)** are missing. File generation is not a Letterboxd account write.
-- The feature-level split is: ratings **26/38 (68.4%)** source, **10/38 (26.3%)** account-write, **11/38 (28.9%)** automated-target; watched/progress **27/38 (71.1%)**, **12/38 (31.6%)**, **13/38 (34.2%)**; watchlist **25/38 (65.8%)**, **10/38 (26.3%)**, **11/38 (28.9%)** automated-target; reviews **16/38 (42.1%)**, **2/38 (5.3%)**, **3/38 (7.9%)**; following **15/38 (39.5%)**, **2/38 (5.3%)**, **2/38 (5.3%)**; followers are **15/38 (39.5%)**, **0/38 (0%)**, **0/38 (0%)**.
+- **7/40 (17.5%)** register direct account read and write methods for the primary ratings, watched/progress, and watchlist families: Trakt, Simkl, MyAnimeList, Shikimori, Bangumi, Kodi, and AniList; **33/40 (82.5%)** do not. This is method coverage, not a promise that every cross-provider record has sufficient identity or lossless shape to write.
+- **2/40 (5%)** register reads for all six canonical families and writes for every mutable family: Trakt and AniList. The other **38/40 (95%)** do not. Followers are excluded from the mutable-family requirement because follower membership has no valid write operation.
+- **30/40 (75%)** have at least one shipped account or file source path. The missing **10/40 (25%)** are the eight metadata/recommendation workflow entries and two restricted entries.
+- **9/40 (22.5%)** expose metadata resolution or recommendations: TMDb, OMDb, Watchmode, MDBList, Wikidata, TVmaze, TheTVDB, TasteDive, and Kitsu. This cross-cutting metric overlaps the mutually exclusive workflow categories because TMDb is a direct-account platform.
+- Across the **240** platform × canonical-family source slots, **127/240 (52.9%)** are readable through an account/file path and **113/240 (47.1%)** are missing.
+- Across the same **240** target slots, **36/240 (15%)** have a verified account write and **204/240 (85%)** do not. Four Letterboxd slots generate user-controlled import files, so total automated target coverage is **40/240 (16.7%)** and **200/240 (83.3%)** are missing. File generation is not a Letterboxd account write.
+- The feature-level split is: ratings **26/40 (65%)** source, **10/40 (25%)** account-write, **11/40 (27.5%)** automated-target; watched/progress **28/40 (70%)**, **12/40 (30%)**, **13/40 (32.5%)**; watchlist **26/40 (65%)**, **10/40 (25%)**, **11/40 (27.5%)** automated-target; reviews **17/40 (42.5%)**, **2/40 (5%)**, **3/40 (7.5%)**; following **15/40 (37.5%)**, **2/40 (5%)**, **2/40 (5%)**; followers are **15/40 (37.5%)**, **0/40 (0%)**, **0/40 (0%)**.
 - **6/6 (100%)** canonical feature families are executable: ratings, watched/progress, watchlist, reviews, following, and followers. **0/6 (0%)** remain model-only.
 - **2/2 (100%)** executor direction modes are shipped: one-way and capability-gated two-way; **0/2 (0%)** are missing. This mode metric does not claim universal pair or data-shape compatibility.
 
@@ -35,7 +35,7 @@ The five workflow categories below are exhaustive and mutually exclusive. Cross-
 | Runtime workflow | Services | Shipped behavior |
 |---|---|---|
 | Direct account | TMDb, Trakt, Simkl, MyAnimeList, Shikimori, Annict, Bangumi, Jellyfin, Emby, Kodi, Plex, Movary, AniList | User-authorized one-way account transfer and capability-gated two-way reconciliation for the features listed below. |
-| Dedicated file | IMDb, Letterboxd, MovieLens | Strict service-specific file manifests produce validated backup-v1 sources through the API, offline CLI, or web panel. Letterboxd additionally has a verified ratings/watched/watchlist/reviews target-file generator. |
+| Dedicated file | IMDb, Letterboxd, MovieLens, Ryot | Strict service-specific file manifests produce validated backup-v1 sources through the API, offline CLI, or web panel. Letterboxd additionally has a verified ratings/watched/watchlist/reviews target-file generator. Ryot accepts the documented CompleteExport JSON for watched/list state and review text; opaque ratings are intentionally skipped. |
 | Metadata/recommendation | OMDb, Watchmode, Wikidata, TVmaze, TheTVDB, TasteDive, Kitsu | Identifier/metadata resolution or recommendations; no user-account data sync. |
 | Manual mapping | TV Time, Metacritic, Reelgood, Serializd, AllMovie, Criticker, FilmAffinity, Flickchart, Taste.io, MUBI, Common Sense Media, Douban Movie, Kinopoisk | Generic mapped CSV to all six canonical families when a lawful user-owned export has the mapped columns. WatchBridge neither fetches these services nor guarantees that they offer an export. |
 | Restricted | Rotten Tomatoes, JustWatch | No connector or mapped-file workflow until required approval/access is obtained. |
@@ -44,13 +44,13 @@ The five workflow categories below are exhaustive and mutually exclusive. Cross-
 
 - `GET /v1/services`, `watchbridge services`, the planner UI, and `GET /v1/support-summary` expose the catalog, runtime profile, and computed percentages. `watchbridge support-summary` prints the same summary; the web panel computes it from the same core registry.
 - `POST /v1/sync/execute`, `watchbridge execute-sync`, and the web account-sync panel run one-way account transfers or capability-gated two-way reconciliation among the thirteen direct connectors. `watchbridge plan <source> <target> <feature> [one-way|two-way]` and the web planner expose the same direction-aware method checks; execution still validates record identity and connector-specific fidelity.
-- `POST /v1/import/provider-files`, the offline `watchbridge import-provider-files` command, and the web provider-file panel convert IMDb, Letterboxd, or MovieLens exports into strict `watchbridge.backup.v1` sources.
+- `POST /v1/import/provider-files`, the offline `watchbridge import-provider-files` command, and the web provider-file panel convert IMDb, Letterboxd, MovieLens, or Ryot exports into strict `watchbridge.backup.v1` sources.
 - `POST /v1/export/letterboxd-files`, the offline `watchbridge generate-letterboxd-files backup.json selection.json` command, and the web Letterboxd export panel generate bounded CSV files for Letterboxd's profile or watchlist importer. They never sign in, upload, or mutate a Letterboxd account.
 - `POST /v1/sync/from-backup`, `watchbridge execute-backup-sync`, and the web backup-sync panel preview or apply a canonical file source to an implemented account target.
 - `POST /v1/backups/:id/restore` and `watchbridge restore-backup` provide additive, same-service restore for a saved direct-connector backup. Cross-service migration uses `/v1/sync/from-backup` instead.
 - Account-sync web results expose the target pre-write backup and, for confirmed two-way execution, the source pre-write backup. Backup-sync results expose the target backup. The browser downloads each with same-origin `GET /v1/backups/:id`, omits browser credentials, and sends the in-memory WatchBridge API key as `Authorization: Bearer` when provided. It validates the identifier, enforces a 50 MiB response bound, and requires the backup-v1 schema marker before saving the JSON.
 - `GET /v1/sync/jobs` and `GET /v1/sync/jobs/:id` expose durable `pending`, `succeeded`, and `failed` audit records. A job must be persisted before execution starts; failed writes retain the failed feature/direction, partial-write warning, completed actions, and available source/target pre-write backup IDs.
-- `POST /v1/metadata/resolve`, `watchbridge resolve-metadata`, and the web metadata panel serve TMDb, exact-IMDb-ID OMDb and Watchmode, exact-Q-item Wikidata, TVmaze, TheTVDB, and exact-ID Kitsu metadata. `POST /v1/recommendations`, `watchbridge recommend`, and the web recommendation panel serve TasteDive recommendations. The web sends request-scoped provider credentials in same-origin JSON without browser credentials and validates result envelopes before rendering them.
+- `POST /v1/metadata/resolve`, `watchbridge resolve-metadata`, and the web metadata panel serve TMDb, exact-IMDb-ID OMDb and Watchmode, exact movie-TMDb-ID MDBList, exact-Q-item Wikidata, TVmaze, TheTVDB, and exact-ID Kitsu metadata. `POST /v1/recommendations`, `watchbridge recommend`, and the web recommendation panel serve TasteDive recommendations. The web sends request-scoped provider credentials in same-origin JSON without browser credentials and validates result envelopes before rendering them.
 
 Confirmed writes require `confirmWrite: true`. Before the first remote mutation, the executor persists the target snapshot and, for two-way execution, the source snapshot too. It then runs every prepared feature/direction batch through non-mutating connector preflight. A later provider/network failure can still leave a partial remote write, which is why failed jobs report `failedDirection` and `writeMayBePartial` and preserve every available pre-write backup. Repository unit/contract tests cover these paths; authorized live-provider end-to-end certification remains a production gate.
 
@@ -74,6 +74,7 @@ Confirmed writes require `confirmWrite: true`. Before the first remote mutation,
 | IMDb | — | — | Ratings, Check-ins watched membership, watchlist CSV | — |
 | Letterboxd | — | — | Ratings, watched, watchlist, reviews CSV | Ratings, watched, watchlist, reviews CSV |
 | MovieLens | — | — | Ratings/movies/links CSV bundle | — |
+| Ryot | — | — | CompleteExport JSON (watched, watchlist, review text) | — |
 
 All six canonical families round-trip through backup v1 and the connector executor. Two-way execution is limited to two live direct-account connectors and a selected feature for which both sides register account read and write support; a backup/file source cannot be used for two-way sync. Following and followers are blocked from cross-provider reconciliation because usernames are provider-scoped, and followers are always read-only.
 
@@ -153,6 +154,12 @@ The connector is intended only for a user's own lawful personal deployment. Plex
 
 Official contracts: [Plex Media Server API](https://developer.plex.tv/pms/), [played-state operation](https://developer.plex.tv/pms/#tag/Timeline/operation/putScrobble), and [Plex Terms of Service](https://www.plex.tv/about/privacy-legal/plex-terms-of-service/).
 
+### Ryot CompleteExport fidelity and limits
+
+Ryot's official [export format](https://docs.ryot.io/exporting.html) is a JSON `CompleteExport`, and its [Generic JSON importer](https://docs.ryot.io/importing/generic-json) uses that same schema. WatchBridge accepts the file through `POST /v1/import/provider-files`, `watchbridge import-provider-files`, or the web provider-file panel. The reader covers movie, show, anime, and manga metadata entries and preserves known TMDb, TVDB, AniList, and MyAnimeList identifiers. It maps Ryot's `seen_history` states to canonical watched membership/list status, preserves an exact integer episodic `progress` string when available, maps the default `Watchlist` collection to planned membership, and keeps non-empty review text, spoiler flags, and review dates.
+
+The export schema does not guarantee a title field: the parser uses `source_id` as the display label and falls back to `<source>:<identifier>`. It also exposes ratings as opaque strings without a documented portable scale, so WatchBridge deliberately does not create numeric canonical ratings. Unsupported lots such as books, music, games, and podcasts are ignored rather than mislabeled. This is a user-controlled local file source only; no Ryot account authentication, API connector, or writer is claimed.
+
 ### Letterboxd target-file fidelity and limits
 
 The Letterboxd generator accepts only a strict `watchbridge.backup.v1` archive and an explicit non-empty selection of `ratings`, `watched`, `watchlist`, and/or `reviews`. It emits UTF-8 CSV files named `letterboxd-<feature>-NNN.csv`; each file includes its header and is at most **1,000,000 UTF-8 bytes**. Large features are split into numbered chunks, a selected empty feature produces a header-only file, and a single row that cannot fit with its header is rejected.
@@ -179,13 +186,15 @@ The IMDb-shaped ratings CSV helper is a portable export utility, not evidence th
 
 ## Metadata and recommendations
 
-- TMDb, OMDb, TVmaze, TheTVDB, and Kitsu ship metadata resolvers. TMDb is classified as direct-account because it also has user-data paths; OMDb is exact-IMDb-ID and API-key based.
+- TMDb, OMDb, Watchmode, MDBList, TVmaze, TheTVDB, and Kitsu ship metadata resolvers. TMDb is classified as direct-account because it also has user-data paths; OMDb and Watchmode are exact-IMDb-ID and API-key based, while MDBList is an exact movie-TMDb-ID API-key lookup.
 - TasteDive ships a recommendation connector.
 - Metadata and recommendations never imply access to ratings, watched history, watchlists, reviews, or social relationships.
 
 OMDb is an API-key metadata-only connector for one exact `externalIds.imdb` lookup at a time. It sends an HTTPS `GET` only to OMDb's documented ID route with `i`, `apikey`, and `r=json`; it does not use title search, list search, JSONP, XML, account/user-data paths, or the separate patron-only poster API. Responses must report an exact success/error discriminator, the requested IMDb ID, the matching `movie`/`series`/`episode` type, a bounded title, and a valid year or year range before WatchBridge returns canonical metadata.
 
 OMDb's official site labels its content [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/), and its [Terms of Use](https://www.omdbapi.com/legal.htm) limit use to personal, non-commercial purposes. Deployers must independently confirm that their use and API-key plan comply. Official API contracts: [parameters and usage](https://www.omdbapi.com/) and [Swagger contract](https://www.omdbapi.com/swagger.json).
+
+MDBList is deliberately limited to one exact movie metadata lookup: WatchBridge sends an HTTPS `GET` to MDBList's documented `/tmdb/movie/{tmdbId}` route with a request-scoped API key. The response must preserve the requested positive TMDb movie ID, identify a movie, and contain a bounded title before canonical metadata is returned; known IMDb, TVDB, Trakt, and MyAnimeList IDs are retained when valid. Account authentication, watchlist/history, ratings, lists, TV lookup, title search, caching, and recommendations are not claimed. The official [MDBList API root](https://api.mdblist.com/) documents the route and media-ID fields; operators must independently confirm their plan quota, attribution, and licensing obligations from the [API documentation](https://docs.mdblist.com/docs/api).
 
 Kitsu is deliberately narrower than a search connector. It performs unauthenticated JSON:API `GET` requests only to the fixed production routes `/anime/{id}`, `/manga/{id}`, or `/episodes/{id}`, selected by canonical kind and an exact positive integer `externalIds.kitsu`. It never calls collection search, Algolia, mappings, users, or library entries. Responses must preserve the exact requested resource ID/type and provide a valid canonical title; nullable dates supply the year, and documented non-negative episode coordinates, including zero, are preserved when present.
 

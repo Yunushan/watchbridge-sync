@@ -25,6 +25,8 @@ export const SERVICE_DEFINITIONS: readonly ServiceDefinition[] = [
   { id: 'omdb', label: 'OMDb', category: 'metadata-discovery', readiness: 'metadata-only', runtime: SERVICE_RUNTIME_SUPPORT.omdb },
   { id: 'watchmode', label: 'Watchmode', category: 'metadata-discovery', readiness: 'metadata-only', runtime: SERVICE_RUNTIME_SUPPORT.watchmode },
   { id: 'movary', label: 'Movary', category: 'movies-tv', readiness: 'implemented', runtime: SERVICE_RUNTIME_SUPPORT.movary },
+  { id: 'ryot', label: 'Ryot', category: 'movies-tv', readiness: 'file-workflow', runtime: SERVICE_RUNTIME_SUPPORT.ryot },
+  { id: 'mdblist', label: 'MDBList', category: 'metadata-discovery', readiness: 'metadata-only', runtime: SERVICE_RUNTIME_SUPPORT.mdblist },
   { id: 'wikidata', label: 'Wikidata', category: 'metadata-discovery', readiness: 'metadata-only', runtime: SERVICE_RUNTIME_SUPPORT.wikidata },
   { id: 'tv-time', label: 'TV Time', category: 'movies-tv', readiness: 'manual', runtime: SERVICE_RUNTIME_SUPPORT['tv-time'] },
   { id: 'trakt', label: 'Trakt', category: 'movies-tv', readiness: 'implemented', runtime: SERVICE_RUNTIME_SUPPORT.trakt },

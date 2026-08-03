@@ -72,6 +72,8 @@ export const SERVICE_RUNTIME_SUPPORT = {
   omdb: support('metadata-recommendation', { metadata: true }),
   watchmode: support('metadata-recommendation', { metadata: true }),
   movary: support('direct-account', { accountReadFeatures: ['watched', 'watchlist'], accountWriteFeatures: ['watched', 'watchlist'] }),
+  ryot: support('dedicated-file', { fileReadFeatures: ['watched', 'watchlist', 'reviews'] }),
+  mdblist: support('metadata-recommendation', { metadata: true }),
   wikidata: support('metadata-recommendation', { metadata: true }),
   'tv-time': support('manual-mapping', { fileReadFeatures: MAPPED_PORTABLE_DATA }),
   trakt: support('direct-account', {

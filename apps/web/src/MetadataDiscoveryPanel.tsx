@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import type { CanonicalMediaItem, MediaKind } from '@watchbridge/core';
 
-const METADATA_PROVIDERS = ['tmdb', 'omdb', 'watchmode', 'wikidata', 'tvmaze', 'thetvdb', 'kitsu'] as const;
+const METADATA_PROVIDERS = ['tmdb', 'omdb', 'watchmode', 'wikidata', 'tvmaze', 'thetvdb', 'kitsu', 'mdblist'] as const;
 export type MetadataProvider = (typeof METADATA_PROVIDERS)[number];
 
 const MEDIA_KINDS: Record<MetadataProvider, readonly MediaKind[]> = {
@@ -11,7 +11,8 @@ const MEDIA_KINDS: Record<MetadataProvider, readonly MediaKind[]> = {
   wikidata: ['movie', 'tv-show', 'episode', 'anime', 'manga'],
   tvmaze: ['tv-show'],
   thetvdb: ['movie', 'tv-show'],
-  kitsu: ['anime', 'manga', 'episode']
+  kitsu: ['anime', 'manga', 'episode'],
+  mdblist: ['movie']
 };
 
 const PROVIDER_LABELS: Record<MetadataProvider, string> = {
@@ -21,7 +22,8 @@ const PROVIDER_LABELS: Record<MetadataProvider, string> = {
   wikidata: 'Wikidata',
   tvmaze: 'TVmaze',
   thetvdb: 'TheTVDB',
-  kitsu: 'Kitsu'
+  kitsu: 'Kitsu',
+  mdblist: 'MDBList'
 };
 
 const MEDIA_KIND_LABELS: Record<MediaKind, string> = {
@@ -59,6 +61,7 @@ export interface MetadataLookupInput {
   tvdbId?: string;
   wikidataId?: string;
   kitsuId?: string;
+  tmdbMovieId?: string;
   omdbApiKey?: string;
   watchmodeApiKey?: string;
   tmdbApplicationToken?: string;
@@ -66,6 +69,7 @@ export interface MetadataLookupInput {
   tvdbAccessToken?: string;
   tvdbApiKey?: string;
   tvdbSubscriberPin?: string;
+  mdblistApiKey?: string;
 }
 
 export interface RecommendationLookupInput {
@@ -253,6 +257,15 @@ export function buildMetadataRequest(input: MetadataLookupInput): Record<string,
     externalIds.kitsu = kitsuId;
   }
 
+  if (input.provider === 'mdblist') {
+    const tmdbMovieId = optionalPositiveInteger(input.tmdbMovieId, 'TMDb movie ID');
+    if (!tmdbMovieId) throw new Error('MDBList requires an exact TMDb movie ID.');
+    const apiKey = optionalSecret(input.mdblistApiKey, 'MDBList API key', 2_000);
+    if (!apiKey) throw new Error('MDBList requires an API key.');
+    externalIds.tmdbMovie = tmdbMovieId;
+    context.apiKey = apiKey;
+  }
+
   return {
     service: input.provider,
     item: {
@@ -388,7 +401,7 @@ export function RecommendationResultList({ recommendations }: { recommendations:
 export function MetadataDiscoveryPanel() {
   const [watchbridgeApiKey, setWatchbridgeApiKey] = useState('');
   const [metadata, setMetadata] = useState<MetadataLookupInput>({
-    provider: 'tvmaze', kind: 'tv-show', title: '', year: '', imdbId: '', tvdbId: '', wikidataId: '', kitsuId: ''
+    provider: 'tvmaze', kind: 'tv-show', title: '', year: '', imdbId: '', tvdbId: '', wikidataId: '', kitsuId: '', tmdbMovieId: ''
   });
   const [metadataMatches, setMetadataMatches] = useState<CanonicalMediaItem[]>();
   const [metadataError, setMetadataError] = useState<string>();
@@ -510,6 +523,15 @@ export function MetadataDiscoveryPanel() {
           </label>
           <p className="support-footnote">Kitsu supports exact public anime, manga, and episode IDs here; it does not search titles or access library entries.</p>
         </>}
+        {metadata.provider === 'mdblist' && <div className="context-grid">
+          <label>TMDb movie ID (required exact lookup)
+            <input type="number" min="1" step="1" value={metadata.tmdbMovieId ?? ''} onChange={(event) => setMetadata((current) => ({ ...current, tmdbMovieId: event.target.value }))} disabled={metadataWorking} />
+          </label>
+          <label>MDBList API key
+            <input type="password" autoComplete="off" value={metadata.mdblistApiKey ?? ''} onChange={(event) => setMetadata((current) => ({ ...current, mdblistApiKey: event.target.value }))} disabled={metadataWorking} />
+          </label>
+          <p className="support-footnote">Exact movie metadata through MDBList’s documented TMDb-ID lookup. TV lookup, account data, watchlist/history, ratings, lists, caching, and title search are not used.</p>
+        </div>}
         <button type="button" onClick={() => void resolveMetadata()} disabled={metadataWorking || !metadata.title.trim()}>
           {metadataWorking ? 'Resolving metadata…' : 'Resolve metadata'}
         </button>

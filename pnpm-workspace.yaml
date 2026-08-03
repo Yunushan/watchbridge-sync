@@ -1,3 +1,6 @@
+overrides:
+  typescript: 5.7.3
+
 packages:
   - "apps/*"
   - "packages/*"

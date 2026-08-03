@@ -70,6 +70,73 @@ describe('provider file import orchestration', () => {
     expect(backup.ratings).toHaveLength(1);
   });
 
+  it('imports the documented Ryot CompleteExport media families without inventing ratings', () => {
+    const backup = importProviderFiles({
+      service: 'ryot',
+      files: {
+        export: JSON.stringify({
+          metadata: [
+            {
+              identifier: '550',
+              lot: 'movie',
+              source: 'tmdb',
+              source_id: 'Fight Club',
+              collections: [{ collection_name: 'Completed', created_on: '2026-01-01T00:00:00Z' }],
+              seen_history: [{ state: 'completed', ended_on: '2026-01-02T00:00:00Z' }],
+              reviews: [{ rating: '9', review: { text: 'A precise export review.', date: '2026-01-03T00:00:00Z', spoiler: true } }]
+            },
+            {
+              identifier: '1399',
+              lot: 'show',
+              source: 'tvdb',
+              source_id: 'Game of Thrones',
+              collections: [{ collection_name: 'Watchlist', created_on: '2026-01-04T00:00:00Z' }],
+              seen_history: [],
+              reviews: []
+            },
+            {
+              identifier: '21',
+              lot: 'anime',
+              source: 'anilist',
+              source_id: 'One Piece',
+              collections: [{ collection_name: 'In Progress' }],
+              seen_history: [{ state: 'in_progress', progress: '12', started_on: '2026-01-05T00:00:00Z' }],
+              reviews: []
+            },
+            {
+              identifier: 'ignored',
+              lot: 'video_game',
+              source: 'custom',
+              source_id: 'Ignored game',
+              collections: [],
+              seen_history: [],
+              reviews: []
+            }
+          ],
+          metadata_groups: null,
+          people: null,
+          collections: null,
+          exercises: null,
+          measurements: null,
+          workouts: null,
+          workout_templates: null
+        })
+      }
+    }, exportedAt);
+
+    expect(backup).toMatchObject({
+      schema: 'watchbridge.backup.v1',
+      service: 'ryot',
+      watched: [
+        { item: { title: 'Fight Club', kind: 'movie', externalIds: { tmdbMovie: 550 } }, status: 'watched', listStatus: 'completed' },
+        { item: { title: 'One Piece', kind: 'anime', externalIds: { anilist: 21 } }, status: 'in-progress', progress: 12 }
+      ],
+      watchlist: [{ item: { title: 'Game of Thrones', externalIds: { tvdb: 1399 } }, listStatus: 'planned' }],
+      reviews: [{ body: 'A precise export review.', spoiler: true, reviewedAt: '2026-01-03T00:00:00Z' }]
+    });
+    expect(backup).not.toHaveProperty('ratings');
+  });
+
   it('rejects unknown fields and missing provider-specific files', () => {
     expect(() => parseProviderFileImportManifest({
       service: 'imdb', files: { ratings: 'csv', reviews: 'not supported' }
@@ -80,6 +147,9 @@ describe('provider file import orchestration', () => {
     expect(() => parseProviderFileImportManifest({
       service: 'movielens', files: { ratings: 'csv' }
     })).toThrow('non-empty string');
+    expect(() => parseProviderFileImportManifest({
+      service: 'ryot', files: { export: 'json', ratings: 'not supported' }
+    })).toThrow('unsupported field');
   });
 
   it('rejects a wrong CSV instead of silently treating it as an empty export', () => {
@@ -158,5 +228,17 @@ describe('provider file import orchestration', () => {
     } catch (error) {
       expect(String(error)).not.toContain('PRIVATE-CELL');
     }
+  });
+
+  it('rejects malformed Ryot identifiers instead of silently remapping them', () => {
+    expect(() => importProviderFiles({
+      service: 'ryot',
+      files: {
+        export: JSON.stringify({ metadata: [{
+          identifier: 'not-a-number', lot: 'movie', source: 'tmdb', source_id: 'Private title',
+          collections: [], seen_history: [], reviews: []
+        }] })
+      }
+    }, exportedAt)).toThrow('Provider file contents could not be converted into a valid backup archive.');
   });
 });

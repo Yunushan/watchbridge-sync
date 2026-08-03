@@ -23,6 +23,7 @@ describe('MetadataDiscoveryPanel', () => {
     expect(html).toContain('TVmaze');
     expect(html).toContain('TheTVDB');
     expect(html).toContain('Kitsu');
+    expect(html).toContain('MDBList');
     expect(html).toContain('Find similar titles with TasteDive');
     expect(html).toContain('without browser credentials');
     expect(html).toContain('WatchBridge API key (optional)');
@@ -98,6 +99,23 @@ describe('metadata request construction', () => {
     expect(() => buildMetadataRequest({
       provider: 'tvmaze', kind: 'tv-show', title: 'Show', imdbId: 'tt12345', tvdbId: '12'
     })).toThrow('not both');
+  });
+
+  it('builds an exact movie-only MDBList request with a request-scoped API key', () => {
+    expect(buildMetadataRequest({
+      provider: 'mdblist', kind: 'movie', title: 'The Shawshank Redemption', tmdbMovieId: '278', mdblistApiKey: ' mdb-key '
+    })).toEqual({
+      service: 'mdblist',
+      item: {
+        id: 'web:metadata:mdblist', kind: 'movie', title: 'The Shawshank Redemption',
+        externalIds: { tmdbMovie: 278 }
+      },
+      context: { apiKey: 'mdb-key' }
+    });
+    expect(() => buildMetadataRequest({ provider: 'mdblist', kind: 'movie', title: 'Heat', mdblistApiKey: 'key' }))
+      .toThrow('exact TMDb movie ID');
+    expect(() => buildMetadataRequest({ provider: 'mdblist', kind: 'tv-show', title: 'Show', tmdbMovieId: '278', mdblistApiKey: 'key' }))
+      .toThrow('does not support TV show');
   });
 
   it('builds only exact-ID OMDb metadata requests with a request-scoped API key', () => {

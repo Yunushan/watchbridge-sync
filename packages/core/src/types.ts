@@ -36,7 +36,9 @@ export type ServiceId =
   | 'plex'
   | 'anilist'
   | 'douban-movie'
-  | 'kinopoisk';
+  | 'kinopoisk'
+  | 'ryot'
+  | 'mdblist';
 
 export type MediaKind = 'movie' | 'tv-show' | 'season' | 'episode' | 'anime' | 'manga';
 

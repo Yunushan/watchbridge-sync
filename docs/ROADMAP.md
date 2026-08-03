@@ -7,11 +7,11 @@
 - Rating conversion engine.
 - One-way and capability-gated two-way sync planner backed by the shipped-runtime registry.
 - Letterboxd CSV parser.
-- Portable IMDb-shaped ratings CSV helper (not claimed as an IMDb account-import format), plus strict IMDb Ratings, Check-ins, and Watchlist export readers.
+- Portable IMDb-shaped ratings CSV helper (not claimed as an IMDb account-import format), plus strict IMDb Ratings, Check-ins, and Watchlist export readers and the Ryot CompleteExport file reader.
 - Web planner, support-percentage, six-provider OAuth, one-way/two-way account-sync, provider-file, backup-sync, additive restore, durable job browsing/detail, authenticated backup-download, manual CSV, Letterboxd export, metadata, and recommendation panels.
 - Tested backup-first one-way and two-way sync execution across all six canonical families, whole-request directional preflight, dry-run reports, bounded redacted conflict details, conflict policies, and durable `pending`/`succeeded`/`failed` job history.
-- Thirteen direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, anime-only Shikimori, anime-only Annict, anime-only Bangumi, user-selected Jellyfin, Emby, and Movary servers, one scoped Kodi library/profile, one selected Plex Media Server, and AniList. AniList supports exact-ID anime/manga media-list ratings, watched/progress, planned-watchlist operations, reviews, and guarded social reads/additive follows; Movary is movie-only and supports exact-ID watched-history/watchlist operations, not ratings. Strict API/CLI/web IMDb, Letterboxd, and MovieLens file workflows remain separate.
-- TMDb, API-key exact-IMDb-ID OMDb and Watchmode, public exact-Q-item Wikidata, TVmaze, credential-required TheTVDB V4, and public exact-ID Kitsu metadata, plus TasteDive recommendations. Watchmode is exact IMDb-ID metadata only; availability/source display, images, caching, account data, and title-name search remain unshipped.
+- Thirteen direct-account connectors: TMDb, Trakt, Simkl, MyAnimeList, anime-only Shikimori, anime-only Annict, anime-only Bangumi, user-selected Jellyfin, Emby, and Movary servers, one scoped Kodi library/profile, one selected Plex Media Server, and AniList. AniList supports exact-ID anime/manga media-list ratings, watched/progress, planned-watchlist operations, reviews, and guarded social reads/additive follows; Movary is movie-only and supports exact-ID watched-history/watchlist operations, not ratings. Strict API/CLI/web IMDb, Letterboxd, MovieLens, and Ryot file workflows remain separate.
+- TMDb, API-key exact-IMDb-ID OMDb and Watchmode, exact movie-TMDb-ID MDBList, public exact-Q-item Wikidata, TVmaze, credential-required TheTVDB V4, and public exact-ID Kitsu metadata, plus TasteDive recommendations. Watchmode is exact IMDb-ID metadata only and MDBList is exact movie metadata only; availability/source display, images, caching, account data, list sync, and title-name search remain unshipped.
 - State-verified account-authorization API, CLI, and web flows for TMDb, Trakt, Simkl, MyAnimeList, Shikimori, and Annict, including refresh or revocation where the provider supports it. Bangumi uses a separately obtained official token; Jellyfin and Emby use server-issued tokens; Kodi uses request-scoped JSON-RPC Basic credentials; Plex uses a caller-provided account token; Movary uses a caller-provided API token, username, and explicit HTTPS `/api/` base URL; AniList uses a caller-provided OAuth access token. None of those other seven has a WatchBridge authorization helper.
 - Validated `watchbridge.backup.v1` file-to-account sync through the same backup-first executor.
 - Additive, same-service backup restore through the API, CLI, and web, with a fresh target snapshot before confirmed restore writes.
@@ -40,7 +40,7 @@
 
 ## Researched platform candidates
 
-These are expansion candidates, not shipped services. They are not part of the current 38-entry catalog or its 228 canonical-family slots, so they do not change the support percentages. A feature is marked **strict** only when the official interface appears to provide authenticated read and write operations for the same canonical meaning; favorites, generic collections, per-file flags, and undocumented endpoints do not count as watchlist/history equivalents. Every candidate still needs authorization, schema fixtures, connector tests, live smoke tests, and a registry change before it may be advertised as supported.
+These are expansion candidates, not shipped services. They are not part of the current 40-entry catalog or its 240 canonical-family slots, so they do not change the support percentages. A feature is marked **strict** only when the official interface appears to provide authenticated read and write operations for the same canonical meaning; favorites, generic collections, per-file flags, and undocumented endpoints do not count as watchlist/history equivalents. Every candidate still needs authorization, schema fixtures, connector tests, live smoke tests, and a registry change before it may be advertised as supported.
 
 | Candidate | Access model | Ratings | Watched/progress | Watchlist | Strict score and next gate | Official references |
 |---|---|---|---|---|---|---|
@@ -48,12 +48,10 @@ These are expansion candidates, not shipped services. They are not part of the c
 
 ### Additional metadata, availability, and self-hosted options
 
-These options are better evaluated by workflow fit than by the three primary account families. None is currently selectable or included in the percentages.
+These options are better evaluated by workflow fit than by the three primary account families. The Ryot CompleteExport file workflow and the bounded MDBList movie metadata lookup are shipped and included in the catalog percentages; the remaining rows below are not selectable yet.
 
 | Candidate | Best fit | Access model | Priority and next gate | Official references |
 |---|---|---|---|---|
-| Ryot | User-owned self-hosted media account connector | Owner-controlled server with a GraphQL API | **High portability value.** Pin a supported server/API version, audit authentication and all six family semantics, then apply the same HTTPS custom-origin/network controls as other self-hosted connectors. | [Official repository and GraphQL link](https://github.com/IgnisDa/ryot) |
-| MDBList | Aggregated title scores, lists, and discovery | API key with plan-based daily limits | **Medium metadata priority.** Validate the live OpenAPI schema, source attribution/licensing, cache rules, and exact external-ID behavior before counting any metadata slot. | [API documentation](https://docs.mdblist.com/docs/api) |
 | fanart.tv | Optional artwork enrichment only | API key and media ID lookup | **Separate enrichment track.** Require fixed HTTPS behavior, explicit image rights/attribution/caching rules, and bounded URL validation; artwork is not canonical user-data support. | [API v3 documentation](https://fanart.tv/api-docs/api-v3/) |
 
 ## Known shipped-platform gaps

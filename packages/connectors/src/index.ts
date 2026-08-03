@@ -23,6 +23,8 @@ export * from './wikidata.js';
 export * from './thetvdb.js';
 export * from './tastedive.js';
 export * from './movielensCsv.js';
+export * from './ryotJson.js';
+export * from './mdblist.js';
 export * from './mappedCsv.js';
 export * from './factory.js';
 export * from './syncExecutor.js';

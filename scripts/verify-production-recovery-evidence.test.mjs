@@ -7,7 +7,7 @@ import test from "node:test";
 
 const verifier = "scripts/verify-production-recovery-evidence.mjs";
 const validEvidence = {
-  schema: "watchbridge.production-recovery-evidence.v1",
+  schema: "watchbridge.production-recovery-evidence.v2",
   commit: "a".repeat(40),
   workflow: "CI",
   runId: "123",
@@ -16,6 +16,7 @@ const validEvidence = {
   proxySmoke: "passed",
   encryptedRestartRecovery: "passed",
   encryptedVolumeRecovery: "passed",
+  encryptedSnapshotVerification: "passed",
 };
 
 async function evidenceFile(value) {
@@ -27,6 +28,21 @@ async function evidenceFile(value) {
 
 test("accepts the complete non-secret recovery evidence schema", async () => {
   const path = await evidenceFile(validEvidence);
+  const output = execFileSync(process.execPath, [verifier, path], {
+    encoding: "utf8",
+  });
+  assert.match(output, /validation passed/);
+});
+
+test("continues to accept legacy v1 evidence without snapshot verification", async () => {
+  const path = await evidenceFile({
+    ...validEvidence,
+    schema: "watchbridge.production-recovery-evidence.v1",
+  });
+  const value = { ...validEvidence };
+  delete value.encryptedSnapshotVerification;
+  value.schema = "watchbridge.production-recovery-evidence.v1";
+  await writeFile(path, JSON.stringify(value), "utf8");
   const output = execFileSync(process.execPath, [verifier, path], {
     encoding: "utf8",
   });
