@@ -50,7 +50,7 @@ jobs:
       - name: Run capacity smoke and retain evidence
         run: |
           mkdir -p evidence
-          pnpm smoke:production-capacity > evidence/production-capacity-evidence.json
+          node scripts/smoke-production-capacity.mjs > evidence/production-capacity-evidence.json
           node scripts/verify-production-capacity-evidence.mjs evidence/production-capacity-evidence.json
       # v7.0.1, pinned to an immutable commit and running on Node 24.
       - name: Retain production capacity evidence
