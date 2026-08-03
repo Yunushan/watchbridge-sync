@@ -9,6 +9,7 @@ import {
   parseLetterboxdWatchlistCsv
 } from './letterboxdCsv.js';
 import { parseMovieLensRatingsCsv } from './movielensCsv.js';
+import { parseRyotJsonExport } from './ryotJson.js';
 
 const MAX_COMBINED_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_USER_ID_LENGTH = 128;
@@ -26,6 +27,10 @@ export type ProviderFileImportManifest =
       service: 'movielens';
       files: { ratings: string; movies: string; links?: string };
       userId?: string;
+    }
+  | {
+      service: 'ryot';
+      files: { export: string };
     };
 
 export class ProviderFileImportError extends Error {
@@ -91,13 +96,20 @@ function requireRecordsForDataRows(label: string, rows: CsvRow[], recordCount: n
 export function parseProviderFileImportManifest(value: unknown): ProviderFileImportManifest {
   const input = object(value, 'Provider file import manifest');
   const service = input.service;
-  if (service !== 'imdb' && service !== 'letterboxd' && service !== 'movielens') {
-    fail('service must be one of: imdb, letterboxd, movielens.');
+  if (service !== 'imdb' && service !== 'letterboxd' && service !== 'movielens' && service !== 'ryot') {
+    fail('service must be one of: imdb, letterboxd, movielens, ryot.');
   }
 
   const allowedTopLevel = service === 'movielens' ? ['service', 'files', 'userId'] : ['service', 'files'];
   if (!hasOnlyKeys(input, allowedTopLevel)) fail('Provider file import manifest contains an unsupported field.');
   const filesInput = object(input.files, 'files');
+
+  if (service === 'ryot') {
+    if (!hasOnlyKeys(filesInput, ['export'])) fail('Ryot files contain an unsupported field.');
+    const files = { export: file(filesInput.export, true)! };
+    checkCombinedSize(files);
+    return { service, files };
+  }
 
   if (service === 'imdb') {
     if (!hasOnlyKeys(filesInput, ['ratings', 'watched', 'watchlist'])) fail('IMDb files contain an unsupported field.');
@@ -207,7 +219,7 @@ export function importProviderFiles(value: unknown, exportedAt = new Date().toIS
         ...(watchlist ? { watchlist } : {}),
         ...(reviews ? { reviews } : {})
       };
-    } else {
+    } else if (manifest.service === 'movielens') {
       const ratingsRows = inspectCsv(manifest.files.ratings, 'MovieLens ratings file', ['userId', 'movieId', 'rating']);
       const moviesRows = inspectCsv(manifest.files.movies, 'MovieLens movies file', ['movieId', 'title']);
       const linksRows = manifest.files.links
@@ -243,6 +255,15 @@ export function importProviderFiles(value: unknown, exportedAt = new Date().toIS
         service: manifest.service,
         exportedAt,
         ratings
+      };
+    } else {
+      const ryot = parseRyotJsonExport(manifest.files.export);
+      backup = {
+        service: manifest.service,
+        exportedAt,
+        watched: ryot.watched,
+        watchlist: ryot.watchlist,
+        reviews: ryot.reviews
       };
     }
     return createBackupArchive(backup);

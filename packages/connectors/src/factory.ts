@@ -20,6 +20,7 @@ import { TraktConnector } from './trakt.js';
 import { TheTvdbConnector } from './thetvdb.js';
 import { TvMazeConnector } from './tvmaze.js';
 import { WikidataConnector } from './wikidata.js';
+import { MdblistConnector } from './mdblist.js';
 
 /**
  * Creates only connectors with a shipped, user-authorized account API path.
@@ -55,6 +56,7 @@ export function createMetadataConnector(service: ServiceId): WatchBridgeConnecto
     case 'kitsu': return new KitsuConnector();
     case 'wikidata': return new WikidataConnector();
     case 'tastedive': return new TasteDiveConnector();
+    case 'mdblist': return new MdblistConnector();
     default: return undefined;
   }
 }

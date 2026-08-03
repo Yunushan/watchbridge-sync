@@ -170,6 +170,10 @@ async function importProviderFilePaths(value: unknown, io: CliIo): Promise<Retur
       }
     });
   }
+  if (manifest.service === 'ryot') {
+    const exported = await io.readText(manifest.files.export);
+    return importProviderFiles({ service: manifest.service, files: { export: exported } });
+  }
   const [ratings, movies, links] = await Promise.all([
     io.readText(manifest.files.ratings),
     io.readText(manifest.files.movies),

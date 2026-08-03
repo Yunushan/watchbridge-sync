@@ -77,8 +77,10 @@ if (
   !/watchbridge-tls-body\.bin/.test(ciWorkflow) ||
   !/body_status/.test(ciWorkflow) ||
   !/http:\/\/127\.0\.0\.1:18081/.test(ciWorkflow) ||
-  !/watchbridge\.production-recovery-evidence\.v1/.test(ciWorkflow) ||
+  !/watchbridge\.production-recovery-evidence\.v2/.test(ciWorkflow) ||
   !/encryptedVolumeRecovery: "passed"/.test(ciWorkflow) ||
+  !/encryptedSnapshotVerification: "passed"/.test(ciWorkflow) ||
+  !/verify-storage-snapshot\.mjs \/snapshot --json/.test(ciWorkflow) ||
   !/verify-production-recovery-evidence\.mjs evidence\/production-recovery-evidence\.json/.test(
     ciWorkflow,
   ) ||
@@ -105,10 +107,30 @@ if (
   !/aquasecurity\/trivy-action@[0-9a-f]{40}/i.test(ciWorkflow) ||
   !/watchbridge-api:ci/.test(ciWorkflow) ||
   !/watchbridge-web:ci/.test(ciWorkflow) ||
-  !/pnpm smoke:production-api/.test(ciWorkflow)
+  !/pnpm smoke:production-api/.test(ciWorkflow) ||
+  !/workspace-coverage-\$\{\{ github\.run_attempt \}\}/.test(ciWorkflow) ||
+  !/coverage-summary\.json/.test(ciWorkflow) ||
+  !/pnpm smoke:production-capacity > evidence\/production-capacity-evidence\.json/.test(ciWorkflow) ||
+  !/verify-production-capacity-evidence\.mjs evidence\/production-capacity-evidence\.json/.test(ciWorkflow) ||
+  !/production-capacity-evidence-\$\{\{ github\.run_attempt \}\}/.test(ciWorkflow)
 ) {
   failures.push(
     ".github/workflows/ci.yml: the production smoke test must prove encrypted restart and full-volume recovery, retain machine-readable recovery evidence, validate authenticated metrics, runtime container hardening, proxy security controls, production-only dependencies, the sync execution budget, and fixable high/critical image vulnerability scanning.",
+  );
+}
+if (
+  !/source-compatibility:/.test(ciWorkflow) ||
+  !/validate:\s*\n\s+needs:\s+source-compatibility/.test(ciWorkflow) ||
+  !/if:\s+\$\{\{ always\(\) \}\}/.test(ciWorkflow) ||
+  !/validate:[\s\S]*?steps:\s*\n\s+- name: Require source compatibility matrix\s*\n\s+if:\s+\$\{\{ needs\.source-compatibility\.result != 'success' \}\}/.test(ciWorkflow) ||
+  /source-compatibility:[\s\S]*?steps:\s*\n\s+- name: Require source compatibility matrix/.test(ciWorkflow) ||
+  !/matrix:\s*\n\s+os:\s*\[ubuntu-latest, windows-latest, macos-latest\]/.test(ciWorkflow) ||
+  !/pnpm -r --sort lint/.test(ciWorkflow) ||
+  !/pnpm -r test/.test(ciWorkflow) ||
+  !/pnpm -r --sort build/.test(ciWorkflow)
+) {
+  failures.push(
+    ".github/workflows/ci.yml: source compatibility must validate the locked workspace on Ubuntu, Windows, and macOS with lint, tests, and builds.",
   );
 }
 if (
@@ -123,6 +145,8 @@ if (
 
 const releaseWorkflow =
   workflowSources.get(".github/workflows/release.yml") ?? "";
+const releaseAssetVerifierIndex = releaseWorkflow.indexOf("verify-release-assets.mjs release");
+const releaseProvenanceIndex = releaseWorkflow.indexOf("actions/attest-build-provenance@");
 if (
   !/actions\/attest-build-provenance@[0-9a-f]{40}/i.test(releaseWorkflow) ||
   !/anchore\/sbom-action@[0-9a-f]{40}/i.test(releaseWorkflow) ||
@@ -154,7 +178,15 @@ if (
   !/Strict-Transport-Security: max-age=31536000/.test(releaseWorkflow) ||
   !/https:\/\/127\.0\.0\.1:18443/.test(releaseWorkflow) ||
   !/watchbridge-release-tls-body\.bin/.test(releaseWorkflow) ||
-  !/body_status/.test(releaseWorkflow)
+  !/body_status/.test(releaseWorkflow) ||
+  !/production-release-coverage-\$\{\{ github\.run_attempt \}\}/.test(releaseWorkflow) ||
+  !/pnpm smoke:production-capacity > release-evidence\/production-capacity-evidence\.json/.test(releaseWorkflow) ||
+  !/verify-production-capacity-evidence\.mjs release-evidence\/production-capacity-evidence\.json/.test(releaseWorkflow) ||
+  !/production-release-capacity-evidence-\$\{\{ github\.run_attempt \}\}/.test(releaseWorkflow) ||
+  !/verify-release-assets\.mjs release/.test(releaseWorkflow) ||
+  releaseAssetVerifierIndex < 0 ||
+  releaseProvenanceIndex < 0 ||
+  releaseAssetVerifierIndex > releaseProvenanceIndex
 ) {
   failures.push(
     ".github/workflows/release.yml: releases must gate publication on shipped HTTP and TLS Compose paths plus encrypted restart recovery, then publish provenance and CycloneDX SBOM attestations with OIDC identity.",

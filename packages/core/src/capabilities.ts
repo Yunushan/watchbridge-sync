@@ -113,6 +113,25 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     integrationMode: 'official-api',
     notes: 'Pinned Movary OpenAPI history/watchlist endpoints for one owner-selected HTTPS server and user. Movie-only, exact Movary IDs only; no rating-write or title-match claim.'
   },
+  ryot: {
+    ...NONE,
+    readWatched: true,
+    exportWatched: true,
+    readWatchlist: true,
+    exportWatchlist: true,
+    readReviews: true,
+    exportReviews: true,
+    apiAuth: 'none',
+    integrationMode: 'official-export',
+    notes: 'The shipped reader accepts Ryot’s documented CompleteExport JSON for movies, shows, anime, and manga. It preserves known TMDb, TVDB, AniList, and MyAnimeList identifiers, seen/list state, exact integer episodic progress, and review text. Ryot ratings remain opaque strings without a documented portable scale, and no direct account API or writer is claimed.'
+  },
+  mdblist: {
+    ...NONE,
+    readMetadata: true,
+    apiAuth: 'api-key',
+    integrationMode: 'metadata-only',
+    notes: 'Exact movie metadata lookup through MDBList’s documented TMDb-ID endpoint using a caller-provided API key. TV lookup, account sync, watchlist/history, ratings, lists, caching, and title search are intentionally not claimed until their response contracts are exercised and pinned.'
+  },
   wikidata: {
     ...NONE,
     readMetadata: true,

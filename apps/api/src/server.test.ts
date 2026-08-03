@@ -1191,13 +1191,13 @@ describe("API access gate", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     await expect(response.json()).resolves.toMatchObject({
       platforms: {
-        selectable: { supported: 38, percent: 100, missingPercent: 0 },
-        directAccount: { supported: 13, percent: 34.2, missingPercent: 65.8 },
-        fullThreeFeatureDirect: { supported: 7, percent: 18.4 },
+        selectable: { supported: 40, percent: 100, missingPercent: 0 },
+        directAccount: { supported: 13, percent: 32.5, missingPercent: 67.5 },
+        fullThreeFeatureDirect: { supported: 7, percent: 17.5 },
         allModelFeaturesDirect: {
           supported: 2,
-          percent: 5.3,
-          missingPercent: 94.7,
+          percent: 5,
+          missingPercent: 95,
           services: ["trakt", "anilist"],
         },
       },
@@ -1207,9 +1207,9 @@ describe("API access gate", () => {
       featureSlots: {
         automatedTarget: {
           supported: 40,
-          total: 228,
-          percent: 17.5,
-          missingPercent: 82.5,
+          total: 240,
+          percent: 16.7,
+          missingPercent: 83.3,
         },
       },
       directions: {
@@ -2288,6 +2288,56 @@ describe("metadata resolution endpoint", () => {
           title: "Heat",
           year: 1995,
           externalIds: { imdb: "tt0113277" },
+        },
+      ],
+    });
+    expect(remoteFetch).toHaveBeenCalledOnce();
+  });
+
+  it("resolves MDBList metadata only by exact TMDb movie ID with a request-scoped API key", async () => {
+    const remoteFetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        expect(`${url.origin}${url.pathname}`).toBe(
+          "https://api.mdblist.com/tmdb/movie/278",
+        );
+        expect([...url.searchParams.keys()]).toEqual(["apikey"]);
+        expect(url.searchParams.get("apikey")).toBe("mdblist-key");
+        expect(new Headers(init?.headers).get("Accept")).toBe(
+          "application/json",
+        );
+        return Response.json({
+          title: "The Shawshank Redemption",
+          year: 1994,
+          mediatype: "movie",
+          ids: { tmdb: 278, imdb: "tt0111161", trakt: 230 },
+        });
+      },
+    );
+    vi.stubGlobal("fetch", remoteFetch);
+    const response = await app.request("/v1/metadata/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service: "mdblist",
+        item: {
+          id: "tmdb:movie:278",
+          kind: "movie",
+          title: "The Shawshank Redemption",
+          externalIds: { tmdbMovie: 278 },
+        },
+        context: { apiKey: "mdblist-key" },
+      }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      matches: [
+        {
+          id: "mdblist:movie:278",
+          kind: "movie",
+          title: "The Shawshank Redemption",
+          year: 1994,
+          externalIds: { tmdbMovie: 278, imdb: "tt0111161", trakt: 230 },
         },
       ],
     });

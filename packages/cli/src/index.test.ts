@@ -28,9 +28,10 @@ describe('WatchBridge CLI', () => {
     const io = makeIo({});
     await run(['services'], io);
     const services = JSON.parse(io.lines[0]);
-    expect(services).toHaveLength(38);
+    expect(services).toHaveLength(40);
     expect(services).toContainEqual(expect.objectContaining({ id: 'omdb', readiness: 'metadata-only' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'watchmode', readiness: 'metadata-only' }));
+    expect(services).toContainEqual(expect.objectContaining({ id: 'mdblist', readiness: 'metadata-only' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'trakt', readiness: 'implemented' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'bangumi', readiness: 'implemented' }));
     expect(services).toContainEqual(expect.objectContaining({ id: 'shikimori', readiness: 'implemented' }));
@@ -45,13 +46,13 @@ describe('WatchBridge CLI', () => {
     await run(['support-summary'], io);
     expect(JSON.parse(io.lines[0])).toMatchObject({
       platforms: {
-        selectable: { supported: 38, total: 38, percent: 100, missingPercent: 0 },
-        directAccount: { supported: 13, percent: 34.2, missingPercent: 65.8 },
-        fullThreeFeatureDirect: { supported: 7, percent: 18.4 },
-        allModelFeaturesDirect: { supported: 2, percent: 5.3, missingPercent: 94.7, services: ['trakt', 'anilist'] }
+        selectable: { supported: 40, total: 40, percent: 100, missingPercent: 0 },
+        directAccount: { supported: 13, percent: 32.5, missingPercent: 67.5 },
+        fullThreeFeatureDirect: { supported: 7, percent: 17.5 },
+        allModelFeaturesDirect: { supported: 2, percent: 5, missingPercent: 95, services: ['trakt', 'anilist'] }
       },
       featureFamilies: { executable: { supported: 6, total: 6, percent: 100, missingPercent: 0 } },
-      featureSlots: { automatedTarget: { supported: 40, total: 228, percent: 17.5, missingPercent: 82.5 } },
+      featureSlots: { automatedTarget: { supported: 40, total: 240, percent: 16.7, missingPercent: 83.3 } },
       directions: { executable: { supported: 2, total: 2, percent: 100, missingPercent: 0 } }
     });
   });
@@ -134,6 +135,28 @@ describe('WatchBridge CLI', () => {
     const backup = JSON.parse(io.lines[0]);
     expect(backup.ratings).toHaveLength(1);
     expect(backup.ratings[0].item.externalIds).toEqual({ movielens: 1, imdb: 'tt0114708', tmdbMovie: 862 });
+  });
+
+  it('loads a Ryot CompleteExport path without network access', async () => {
+    const io = makeIo({
+      'provider.json': JSON.stringify({ service: 'ryot', files: { export: 'ryot.json' } }),
+      'ryot.json': JSON.stringify({
+        metadata: [{
+          identifier: '550', lot: 'movie', source: 'tmdb', source_id: 'Fight Club',
+          collections: [{ collection_name: 'Completed', created_on: '2026-01-01T00:00:00Z' }],
+          seen_history: [{ state: 'completed', ended_on: '2026-01-02T00:00:00Z' }],
+          reviews: []
+        }]
+      })
+    });
+
+    await run(['import-provider-files', 'provider.json'], io);
+
+    expect(JSON.parse(io.lines[0])).toMatchObject({
+      schema: 'watchbridge.backup.v1', service: 'ryot',
+      watched: [{ item: { title: 'Fight Club', externalIds: { tmdbMovie: 550 } }, status: 'watched' }]
+    });
+    expect(io.readText).toHaveBeenCalledWith('ryot.json');
   });
 
   it('rejects unsupported provider manifest fields before reading referenced files', async () => {

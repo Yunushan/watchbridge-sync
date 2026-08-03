@@ -18,6 +18,8 @@ describe('ProviderFileImportPanel manifests', () => {
     expect(() => validateProviderFileSelection('letterboxd', { reviews: 'csv' })).not.toThrow();
     expect(() => validateProviderFileSelection('movielens', { ratings: 'csv' })).toThrow('ratings.csv and movies.csv');
     expect(() => validateProviderFileSelection('movielens', { ratings: 'ratings', movies: 'movies' })).not.toThrow();
+    expect(() => validateProviderFileSelection('ryot', {})).toThrow('CompleteExport JSON');
+    expect(() => validateProviderFileSelection('ryot', { export: '{}' })).not.toThrow();
   });
 
   it('checks both combined UTF-8 content and serialized-request byte limits', () => {
@@ -40,7 +42,8 @@ describe('ProviderFileImportPanel manifests', () => {
     expect(html).toContain('Letterboxd');
     expect(html).toContain('10 MiB');
     expect(html).toContain('without browser credentials');
-    expect(html).toContain('including IMDb Check-ins and Letterboxd reviews');
+    expect(html).toContain('IMDb Check-ins, Letterboxd reviews, and Ryot CompleteExport JSON');
+    expect(html).toContain('Ryot');
     expect(buildProviderImportRequest('letterboxd', { reviews: 'Name,Review\nHeat,Great film' }).body)
       .toEqual({ service: 'letterboxd', files: { reviews: 'Name,Review\nHeat,Great film' } });
   });

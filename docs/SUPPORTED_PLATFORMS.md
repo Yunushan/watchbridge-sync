@@ -3,9 +3,9 @@
 | Platform/runtime | Current status | Notes |
 |---|---|---|
 | Web browser | Shipped | React/Vite UI; serve the built static assets and point them at the API. This is not currently packaged as an installed PWA. |
-| Ubuntu Linux | CI-verified | Node 24 API/CLI and web build are installed, linted, tested, and built on `ubuntu-latest`. No native desktop wrapper is shipped. |
-| Windows / Windows Server | Source runtime, not CI-certified | The Node 24 API/CLI and static web build are intended to be portable, but this repository's CI matrix does not currently certify Windows and no native desktop binary is shipped. |
-| macOS | Source runtime, not CI-certified | The Node 24 API/CLI and static web build are intended to be portable; no native desktop binary is shipped. |
+| Ubuntu Linux | CI-verified | Node 24 API/CLI and web build are installed, linted, tested, and built on `ubuntu-latest`; the production Compose/TLS smoke runs here. No native desktop wrapper is shipped. |
+| Windows / Windows Server | Source runtime, CI-verified | The Node 24 API/CLI and static web build run through the source lint/test/build matrix on `windows-latest`; production containers remain Linux-only and no native desktop binary is shipped. |
+| macOS | Source runtime, CI-verified | The Node 24 API/CLI and static web build run through the source lint/test/build matrix on `macos-latest`; no native desktop binary is shipped. |
 | BSD | Unverified | A compatible Node 24 runtime may work, but the repository does not test or package BSD. |
 | Windows/Linux/macOS desktop app | Planned | `apps/desktop` contains packaging guidance only; it is not a Tauri or Electron application today. |
 | Android/iOS app | Planned | `apps/mobile` contains packaging guidance only; no Capacitor, React Native, Android, or iOS client is shipped. |

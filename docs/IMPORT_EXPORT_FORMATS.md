@@ -4,7 +4,7 @@ Shipped formats are deliberately narrower than the canonical model:
 
 - strict, versioned `watchbridge.backup.v1` JSON upload/download;
 - explicitly mapped CSV input for the 13 `manual-mapping` services;
-- dedicated IMDb, Letterboxd, and MovieLens source-file manifests;
+- dedicated IMDb, Letterboxd, MovieLens, and Ryot source-file manifests;
 - a Letterboxd ratings/watched/watchlist/reviews target-file generator;
 - a library helper that creates a portable IMDb-shaped ratings CSV without claiming provider import compatibility.
 
@@ -46,7 +46,7 @@ Kitsu's positive integer external ID is schema-valid only for anime, manga, or e
 
 ## Dedicated provider-file manifests
 
-`POST /v1/import/provider-files` converts user-owned IMDb, Letterboxd, or MovieLens exports directly into a validated `watchbridge.backup.v1` archive. The response is the archive itself, without a wrapper. File values sent to the API are the CSV contents:
+`POST /v1/import/provider-files` converts user-owned IMDb, Letterboxd, MovieLens, or Ryot exports directly into a validated `watchbridge.backup.v1` archive. The response is the archive itself, without a wrapper. File values sent to the API are the CSV contents for CSV-based services:
 
 ```json
 {
@@ -89,6 +89,19 @@ Review text, an optional provider-required summary, and an optional attached rat
 }
 ```
 
+Ryot accepts one documented `CompleteExport` JSON file:
+
+```json
+{
+  "service": "ryot",
+  "files": {
+    "export": "<contents of a Ryot CompleteExport JSON file>"
+  }
+}
+```
+
+The Ryot reader covers movie, show, anime, and manga metadata entries. It maps `seen_history` states, the default `Watchlist` collection, exact integer episodic progress, and review text/spoiler/date fields into canonical backup records. Ryot's exported rating is an opaque string without a documented portable scale, so numeric ratings are intentionally omitted. The schema also does not guarantee a title field; `source_id` is used as the display label and otherwise the parser uses `<source>:<identifier>`. Other media lots are ignored rather than mislabeled, and no Ryot account credentials or direct writer are used.
+
 The manifest and nested `files` object reject unknown fields. Supplied files must be non-empty strings and may total at most 10 MiB after UTF-8 encoding. MovieLens `userId` is limited to 128 characters and may not contain control characters. It may be omitted for a single-user ratings file; a file containing multiple distinct users is rejected until one is selected, and a selector with no matching data rows is rejected rather than producing an ambiguous empty backup. Parser or archive-validation failures return a sanitized `400` response that never echoes file contents.
 
 The CLI performs the same conversion entirely locally. In a CLI manifest, the `files` values are local paths rather than CSV contents:
@@ -107,7 +120,16 @@ The CLI performs the same conversion entirely locally. In a CLI manifest, the `f
 
 Paths are resolved from the CLI process working directory. Run `watchbridge import-provider-files manifest.json`; the strict backup-v1 archive is printed to standard output without credentials or network access. It can then be placed in a `/v1/sync/from-backup` request for a dry-run into a shipped account target.
 
-Dedicated parsers accept a genuine header-only export, but a file containing data rows that produces no valid records is rejected instead of silently returning an empty archive. MovieLens files with multiple user IDs require an explicit selector.
+For Ryot, the equivalent local manifest is:
+
+```json
+{
+  "service": "ryot",
+  "files": { "export": "exports/ryot-complete-export.json" }
+}
+```
+
+CSV dedicated parsers accept a genuine header-only export, but a file containing data rows that produces no valid records is rejected instead of silently returning an empty archive. Ryot exports may contain only unsupported media lots; those lots are ignored by design. MovieLens files with multiple user IDs require an explicit selector.
 
 ## Canonical backup to Letterboxd files
 

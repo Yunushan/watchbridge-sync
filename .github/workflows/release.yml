@@ -46,6 +46,32 @@ jobs:
           test "$RELEASE_TAG" = "v$(node --input-type=module -e \"import pkg from './package.json' with { type: 'json' }; process.stdout.write(pkg.version)\")"
       - run: pnpm audit --prod --audit-level high
       - run: pnpm check
+      # v7.0.1, pinned to an immutable commit and running on Node 24.
+      - name: Retain release coverage summaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: production-release-coverage-${{ github.run_attempt }}
+          path: |
+            apps/api/coverage/coverage-summary.json
+            apps/web/coverage/coverage-summary.json
+            packages/cli/coverage/coverage-summary.json
+            packages/connectors/coverage/coverage-summary.json
+            packages/core/coverage/coverage-summary.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Run and retain production capacity evidence
+        run: |
+          mkdir -p release-evidence
+          pnpm smoke:production-capacity > release-evidence/production-capacity-evidence.json
+          node scripts/verify-production-capacity-evidence.mjs release-evidence/production-capacity-evidence.json
+      # v7.0.1, pinned to an immutable commit and running on Node 24.
+      - name: Retain release capacity evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: production-release-capacity-evidence-${{ github.run_attempt }}
+          path: release-evidence/production-capacity-evidence.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Gate release on the shipped production containers
         env:
           WATCHBRIDGE_API_KEY: watchbridge-release-api-key-000000000
@@ -177,6 +203,10 @@ jobs:
           artifact-name: watchbridge-sync-${{ github.ref_name }}-sbom.cdx.json
           upload-artifact: false
           upload-release-assets: false
+      - name: Verify release assets before attestation
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/verify-release-assets.mjs release "$RELEASE_TAG"
       # v3, pinned to an immutable commit.
       - name: Attest release archive provenance
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a

@@ -17,7 +17,7 @@ if (!path) {
   }
 
   if (process.exitCode === undefined) {
-    const expected = new Set([
+    const baseFields = new Set([
       "schema",
       "commit",
       "workflow",
@@ -32,6 +32,12 @@ if (!path) {
     if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
       failures.push("must be a JSON object");
     } else {
+      const schema = evidence.schema;
+      const expected = new Set(baseFields);
+      if (schema === "watchbridge.production-recovery-evidence.v2") expected.add("encryptedSnapshotVerification");
+      if (schema !== "watchbridge.production-recovery-evidence.v1" && schema !== "watchbridge.production-recovery-evidence.v2") {
+        failures.push("has an unrecognized schema");
+      }
       const keys = Object.keys(evidence);
       for (const key of keys) {
         if (!expected.has(key)) failures.push(`contains unknown field ${key}`);
@@ -39,8 +45,6 @@ if (!path) {
       for (const key of expected) {
         if (!(key in evidence)) failures.push(`is missing ${key}`);
       }
-      if (evidence.schema !== "watchbridge.production-recovery-evidence.v1")
-        failures.push("has an unrecognized schema");
       if (typeof evidence.commit !== "string" || !/^[0-9a-f]{40}$/i.test(evidence.commit))
         failures.push("has an invalid commit SHA");
       for (const key of ["workflow", "runId", "runAttempt"]) {
@@ -59,6 +63,9 @@ if (!path) {
         "encryptedVolumeRecovery",
       ]) {
         if (evidence[key] !== "passed") failures.push(`${key} is not passed`);
+      }
+      if (schema === "watchbridge.production-recovery-evidence.v2" && evidence.encryptedSnapshotVerification !== "passed") {
+        failures.push("encryptedSnapshotVerification is not passed");
       }
     }
     if (failures.length) {

@@ -13,7 +13,7 @@ Before the first public deployment:
 5. Confirm `/healthz` and `/readyz` from the private deployment network, then configure the Prometheus scrape target and alert receiver.
 6. Complete one dry-run sync with a disposable account pair and verify that no token, request body, or provider context enters logs or retained evidence.
 
-The API is intentionally single-instance and file-backed. Do not add replicas or point multiple instances at the same data directories until shared filesystem semantics, job claims, OAuth transactions, vault policy, and recovery behavior have been certified for that deployment.
+The API is intentionally single-instance and file-backed. Do not add replicas or point multiple instances at the same data directories until shared filesystem semantics, job claims, OAuth transactions, vault policy, and recovery behavior have been certified for that deployment. CI also runs the deterministic capacity smoke as a regression signal; it is not a substitute for host-specific load testing.
 
 ## Service objectives
 
@@ -23,6 +23,8 @@ These are starting targets to measure and tune; they are not current availabilit
 - Non-sync API requests: p95 below 2 seconds and 5xx below 1% over a 10-minute window.
 - Confirmed syncs: 100% must have a durable `pending`, `succeeded`, or `failed` job record and a pre-write backup before the first remote mutation.
 - Recovery: restore the encrypted volume and prove `/readyz` plus one authenticated backup read within the deployment's documented recovery objective.
+
+The CI `smoke:production-capacity` check exercises 64 authenticated metrics requests with 16 concurrent workers and fails if any request errors or the measured p95 exceeds two seconds. Treat its JSON output as a repeatable baseline only; production SLOs still require measurements from the intended host, proxy, storage, and provider mix.
 
 Review these targets after measuring provider latency, storage I/O, and real sync sizes. Do not increase concurrency or proxy timeouts solely to silence an alert.
 
@@ -57,6 +59,16 @@ For `WatchBridgeSyncExecutionSaturated` or `WatchBridgeApiRequestCapacitySaturat
 4. Read one known backup and one job record through the authenticated API. If the key is missing or wrong, stop; repeated attempts cannot recover encrypted records.
 5. Run a dry-run against a disposable provider account and review the resulting evidence before enabling writes.
 6. Retain the recovery timestamp, release tag, volume identifier, checks performed, and operator identity without recording tokens or vault contents.
+
+For an off-host copy, run the repository verifier against the restored snapshot before starting the service. It requires the storage key through the environment (never a command-line argument), decrypts every recognized backup/job/OAuth-vault record, rejects plaintext or tampered envelopes, and can produce a non-secret checksum manifest:
+
+```bash
+WATCHBRIDGE_STORAGE_KEY="<32-byte-key>" \
+  node scripts/verify-storage-snapshot.mjs /path/to/restored/watchbridge-data \
+  --write-manifest /path/to/restored/watchbridge-snapshot-manifest.json
+```
+
+After copying the snapshot to a second failure domain, verify the manifest again with `--verify-manifest`. Keep the manifest and the recovery evidence with the release tag, but never retain the storage key, decrypted records, vault IDs, or provider context in the evidence bundle. The verifier proves authenticated readability and byte-level continuity of the copied records; it does not replace a provider-side reconciliation drill.
 
 Application-level encryption protects record contents, not filenames, sizes, timestamps, or the availability of the storage key. For rotation, keep the replacement in `WATCHBRIDGE_STORAGE_KEY` and the retired key in `WATCHBRIDGE_STORAGE_KEY_PREVIOUS` until every retained record has been read and rewritten. Only one previous key is supported; keep retired-key escrow until the retention window expires.
 

@@ -9,9 +9,14 @@ permissions:
 
 jobs:
   validate:
+    needs: source-compatibility
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Require source compatibility matrix
+        if: ${{ needs.source-compatibility.result != 'success' }}
+        run: exit 1
       # v5, pinned to an immutable commit; Dependabot keeps this current.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -27,8 +32,61 @@ jobs:
       - run: pnpm audit --prod --audit-level high
       - run: pnpm lint
       - run: pnpm test
+      # v7.0.1, pinned to an immutable commit and running on Node 24.
+      - name: Retain workspace coverage summaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: workspace-coverage-${{ github.run_attempt }}
+          path: |
+            apps/api/coverage/coverage-summary.json
+            apps/web/coverage/coverage-summary.json
+            packages/cli/coverage/coverage-summary.json
+            packages/connectors/coverage/coverage-summary.json
+            packages/core/coverage/coverage-summary.json
+          if-no-files-found: error
+          retention-days: 30
       - run: pnpm build
       - run: pnpm smoke:production-api
+      - name: Run capacity smoke and retain evidence
+        run: |
+          mkdir -p evidence
+          pnpm smoke:production-capacity > evidence/production-capacity-evidence.json
+          node scripts/verify-production-capacity-evidence.mjs evidence/production-capacity-evidence.json
+      # v7.0.1, pinned to an immutable commit and running on Node 24.
+      - name: Retain production capacity evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: production-capacity-evidence-${{ github.run_attempt }}
+          path: evidence/production-capacity-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+  source-compatibility:
+    name: Source compatibility (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      # v5, pinned to an immutable commit; Dependabot keeps this current.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      # v5, pinned to an immutable commit.
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+      # v5, pinned to an immutable commit.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --sort lint
+      - run: pnpm check:test-inventory
+      - run: pnpm check:monitoring
+      - run: pnpm -r test
+      - run: pnpm -r --sort build
 
   container-smoke:
     needs: validate
@@ -178,6 +236,11 @@ jobs:
             --volume "$source_volume:/source:ro" \
             --volume "$RECOVERY_VOLUME:/restore" \
             watchbridge-api:ci sh -c 'cp -a /source/. /restore/'
+          docker run --rm --user watchbridge \
+            --env "WATCHBRIDGE_STORAGE_KEY=$WATCHBRIDGE_STORAGE_KEY" \
+            --volume "$RECOVERY_VOLUME:/snapshot:ro" \
+            --volume "$GITHUB_WORKSPACE/scripts/verify-storage-snapshot.mjs:/verify-storage-snapshot.mjs:ro" \
+            watchbridge-api:ci node /verify-storage-snapshot.mjs /snapshot --json
           docker compose -f docker-compose.production.yml down --volumes --remove-orphans
           docker volume create \
             --label "com.docker.compose.project=$project_label" \
@@ -258,13 +321,13 @@ jobs:
         run: |
           mkdir -p evidence
           jq --null-input \
-            --arg schema "watchbridge.production-recovery-evidence.v1" \
+            --arg schema "watchbridge.production-recovery-evidence.v2" \
             --arg commit "$GITHUB_SHA" \
             --arg workflow "$GITHUB_WORKFLOW" \
             --arg run_id "$GITHUB_RUN_ID" \
             --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
             --arg generated_at "$(date --utc --iso-8601=seconds)" \
-            '{schema: $schema, commit: $commit, workflow: $workflow, runId: $run_id, runAttempt: $run_attempt, generatedAt: $generated_at, proxySmoke: "passed", encryptedRestartRecovery: "passed", encryptedVolumeRecovery: "passed"}' \
+            '{schema: $schema, commit: $commit, workflow: $workflow, runId: $run_id, runAttempt: $run_attempt, generatedAt: $generated_at, proxySmoke: "passed", encryptedRestartRecovery: "passed", encryptedVolumeRecovery: "passed", encryptedSnapshotVerification: "passed"}' \
             > evidence/production-recovery-evidence.json
           node scripts/verify-production-recovery-evidence.mjs evidence/production-recovery-evidence.json
       # v7.0.1, pinned to an immutable commit and running on Node 24.

@@ -8,19 +8,28 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @watchbridge/api --filter @watchbridge/web dev",
     "build": "pnpm -r --sort build",
-    "test": "pnpm -r test && pnpm test:operational",
-    "test:operational": "node --test scripts/live-provider-dry-run.test.mjs scripts/verify-production-recovery-evidence.test.mjs",
+    "test": "pnpm -r test && pnpm test:operational && pnpm test:coverage",
+    "test:operational": "node --test scripts/live-provider-dry-run.test.mjs scripts/verify-production-recovery-evidence.test.mjs scripts/verify-storage-snapshot.test.mjs scripts/verify-production-capacity-evidence.test.mjs scripts/verify-release-assets.test.mjs",
+    "test:coverage": "pnpm -r --if-present test:coverage",
+    "verify:release-assets": "node scripts/verify-release-assets.mjs",
+    "verify:storage-snapshot": "node scripts/verify-storage-snapshot.mjs",
     "check:workflow": "node scripts/check-workflow-hardening.mjs",
     "check:release-metadata": "node scripts/check-release-metadata.mjs",
+    "check:test-inventory": "node scripts/check-test-inventory.mjs",
     "check:package-contents": "node scripts/check-package-contents.mjs",
     "check:web-security-headers": "node scripts/check-web-security-headers.mjs",
+    "check:monitoring": "node scripts/check-monitoring-contract.mjs",
+    "check:coverage": "node scripts/check-coverage-contract.mjs",
+    "check:governance": "node scripts/check-github-governance.mjs",
     "check:configuration": "prettier --check .github/**/*.yml monitoring/*.yml docker-compose.production.yml docker-compose.tls.yml",
     "smoke:production-api": "node scripts/smoke-production-api.mjs",
-    "lint": "pnpm build && pnpm -r --sort lint && pnpm check:workflow && pnpm check:release-metadata && pnpm check:package-contents && pnpm check:web-security-headers && pnpm check:configuration",
+    "smoke:production-capacity": "node scripts/smoke-production-capacity.mjs",
+    "lint": "pnpm build && pnpm -r --sort lint && pnpm check:workflow && pnpm check:release-metadata && pnpm check:test-inventory && pnpm check:monitoring && pnpm check:coverage && pnpm check:package-contents && pnpm check:web-security-headers && pnpm check:configuration",
     "format": "prettier -w .",
     "check": "pnpm lint && pnpm test && pnpm build && pnpm smoke:production-api"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "4.1.10",
     "@types/node": "26.1.1",
     "prettier": "3.9.6",
     "typescript": "5.7.3",
@@ -30,10 +39,5 @@
     "node": ">=24.0.0",
     "pnpm": ">=9.0.0"
   },
-  "packageManager": "pnpm@9.15.0",
-  "pnpm": {
-    "overrides": {
-      "typescript": "5.7.3"
-    }
-  }
+  "packageManager": "pnpm@9.15.0"
 }
