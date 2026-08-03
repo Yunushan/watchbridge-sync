@@ -43,9 +43,16 @@ function parseTarEntries(archive) {
     names.add(fullName);
     const size = parseOctal(block, 124, 12, "file size");
     const type = String.fromCharCode(block[156] || 0);
+    const dataBlocks = Math.ceil(size / 512) * 512;
+    // GNU tar emits this global PAX metadata record before Git archive entries.
+    if (type === "g" && fullName === "pax_global_header") {
+      offset += 512 + dataBlocks;
+      if (offset > archive.length) throw new Error("source archive contains a truncated file");
+      continue;
+    }
     if (type !== "0" && type !== "\0" && type !== "5") throw new Error(`source archive contains a special file: ${fullName}`);
     entries.push({ name: fullName, type });
-    offset += 512 + Math.ceil(size / 512) * 512;
+    offset += 512 + dataBlocks;
     if (offset > archive.length) throw new Error("source archive contains a truncated file");
   }
   if (zeroBlocks < 2) throw new Error("source archive is missing its tar end marker");
@@ -68,7 +75,9 @@ async function main() {
   const checksum = (await readFile(join(directory, checksumName), "utf8")).trim().split(/\r?\n/u);
   if (checksum.length !== 1) throw new Error("checksum file must contain exactly one entry");
   const checksumMatch = /^([0-9a-f]{64})\s+\*?(.+)$/i.exec(checksum[0]);
-  if (!checksumMatch || checksumMatch[2] !== archiveName) throw new Error("checksum file does not name the expected source archive");
+  const checksumPath = checksumMatch?.[2].replace(/\\/gu, "/");
+  // sha256sum runs from the repository root in the release workflow.
+  if (!checksumMatch || ![archiveName, `release/${archiveName}`].includes(checksumPath)) throw new Error("checksum file does not name the expected source archive");
   const actualHash = createHash("sha256").update(archive).digest("hex");
   if (actualHash !== checksumMatch[1].toLowerCase()) throw new Error("source archive checksum does not match");
   let entries;

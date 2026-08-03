@@ -9,7 +9,7 @@ import test from "node:test";
 
 const verifier = "scripts/verify-release-assets.mjs";
 
-function tarEntry(name, contents) {
+function tarEntry(name, contents, type = "0") {
   const body = Buffer.from(contents, "utf8");
   const block = Buffer.alloc(512);
   block.write(name, 0, "utf8");
@@ -18,7 +18,7 @@ function tarEntry(name, contents) {
   block.write("0000000\0", 116, "ascii");
   block.write(`${body.length.toString(8).padStart(11, "0")}\0`, 124, "ascii");
   block.write("00000000000\0", 136, "ascii");
-  block[156] = 0x30;
+  block[156] = type.charCodeAt(0);
   block.write("ustar\0", 257, "ascii");
   block.write("00", 263, "ascii");
   for (let index = 148; index < 156; index += 1) block[index] = 0x20;
@@ -48,6 +48,22 @@ async function releaseDirectory() {
 
 test("validates source archive, checksum, and SBOM assets", async () => {
   const { directory, tag } = await releaseDirectory();
+  const output = execFileSync(process.execPath, [verifier, directory, tag], { encoding: "utf8" });
+  assert.match(output, /Release asset validation passed/);
+});
+
+test("accepts Git PAX metadata and the release workflow checksum path", async () => {
+  const { directory, tag, archiveName } = await releaseDirectory();
+  const prefix = `watchbridge-sync-${tag}`;
+  const archive = gzipSync(Buffer.concat([
+    tarEntry("pax_global_header", "25 mtime=0\\n", "g"),
+    tarEntry(`${prefix}/package.json`, "{}"),
+    tarEntry(`${prefix}/LICENSE`, "0BSD"),
+    tarEntry(`${prefix}/Dockerfile`, "FROM scratch"),
+    Buffer.alloc(1024),
+  ]));
+  await writeFile(join(directory, archiveName), archive);
+  await writeFile(join(directory, `${archiveName}.sha256`), `${createHash("sha256").update(archive).digest("hex")}  release/${archiveName}\n`);
   const output = execFileSync(process.execPath, [verifier, directory, tag], { encoding: "utf8" });
   assert.match(output, /Release asset validation passed/);
 });
