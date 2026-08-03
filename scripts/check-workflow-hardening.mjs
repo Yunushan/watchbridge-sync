@@ -110,7 +110,7 @@ if (
   !/pnpm smoke:production-api/.test(ciWorkflow) ||
   !/workspace-coverage-\$\{\{ github\.run_attempt \}\}/.test(ciWorkflow) ||
   !/coverage-summary\.json/.test(ciWorkflow) ||
-  !/pnpm smoke:production-capacity > evidence\/production-capacity-evidence\.json/.test(ciWorkflow) ||
+  !/node scripts\/smoke-production-capacity\.mjs > evidence\/production-capacity-evidence\.json/.test(ciWorkflow) ||
   !/verify-production-capacity-evidence\.mjs evidence\/production-capacity-evidence\.json/.test(ciWorkflow) ||
   !/production-capacity-evidence-\$\{\{ github\.run_attempt \}\}/.test(ciWorkflow)
 ) {
@@ -180,7 +180,7 @@ if (
   !/watchbridge-release-tls-body\.bin/.test(releaseWorkflow) ||
   !/body_status/.test(releaseWorkflow) ||
   !/production-release-coverage-\$\{\{ github\.run_attempt \}\}/.test(releaseWorkflow) ||
-  !/pnpm smoke:production-capacity > release-evidence\/production-capacity-evidence\.json/.test(releaseWorkflow) ||
+  !/node scripts\/smoke-production-capacity\.mjs > release-evidence\/production-capacity-evidence\.json/.test(releaseWorkflow) ||
   !/verify-production-capacity-evidence\.mjs release-evidence\/production-capacity-evidence\.json/.test(releaseWorkflow) ||
   !/production-release-capacity-evidence-\$\{\{ github\.run_attempt \}\}/.test(releaseWorkflow) ||
   !/verify-release-assets\.mjs release/.test(releaseWorkflow) ||
