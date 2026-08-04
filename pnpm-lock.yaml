@@ -28,7 +28,7 @@ importers:
     dependencies:
       '@hono/node-server':
         specifier: 2.0.11
-        version: 2.0.11(hono@4.12.30)
+        version: 2.0.11(hono@4.12.34)
       '@watchbridge/connectors':
         specifier: workspace:*
         version: link:../../packages/connectors
@@ -36,8 +36,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/core
       hono:
-        specifier: 4.12.30
-        version: 4.12.30
+        specifier: 4.12.34
+        version: 4.12.34
     devDependencies:
       '@vitest/coverage-v8':
         specifier: 4.1.10
@@ -576,8 +576,8 @@ packages:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==}
     engines: {node: '>=8'}
 
-  hono@4.12.30:
-    resolution: {integrity: sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog==}
+  hono@4.12.34:
+    resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@2.0.2:
@@ -976,9 +976,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@hono/node-server@2.0.11(hono@4.12.30)':
+  '@hono/node-server@2.0.11(hono@4.12.34)':
     dependencies:
-      hono: 4.12.30
+      hono: 4.12.34
 
   '@jridgewell/resolve-uri@3.1.2': {}
 
@@ -1199,7 +1199,7 @@ snapshots:
 
   has-flag@4.0.0: {}
 
-  hono@4.12.30: {}
+  hono@4.12.34: {}
 
   html-escaper@2.0.2: {}
 
