@@ -82,6 +82,7 @@ function runAudit(branchProtection, environmentPayload = environments) {
           ["/repos/owner/repo/environments", ${JSON.stringify(environmentPayload)}],
         ]);
         globalThis.fetch = async (url) => new Response(JSON.stringify(responses.get(new URL(url).pathname)), { status: 200, headers: { "content-type": "application/json" } });
+        process.env.GITHUB_REPOSITORY = "owner/repo";
         process.env.GITHUB_TOKEN = "test-token";
         process.argv = ["node", "check-github-governance.mjs", "owner/repo"];
         await import(${JSON.stringify(governanceScript)});
