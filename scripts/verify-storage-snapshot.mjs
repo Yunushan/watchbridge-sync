@@ -6,8 +6,18 @@ const STORAGE_SCHEMA = "watchbridge.storage.v1";
 const STORAGE_ALGORITHM = "A256GCM";
 const NONCE_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
-const RECORD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const RECORD_ID = new RegExp(`^${UUID_PATTERN}$`, "i");
 const TENANT_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const TRANSIENT_READY_FILE = new RegExp(`^\\.watchbridge-ready-${UUID_PATTERN}\\.tmp$`, "i");
+const TRANSIENT_ATOMIC_FILE = new RegExp(`^\\.${UUID_PATTERN}\\.${UUID_PATTERN}\\.tmp$`, "i");
+const TRANSIENT_OAUTH_FILE = new RegExp(`^${UUID_PATTERN}\\.json\\.[A-Za-z0-9_-]{16}\\.tmp$`, "i");
+// Atomic storage writes and readiness probes can leave a transient file while
+// a live snapshot is copied. These hidden/temp files are never committed as
+// records; the verifier must ignore them so a concurrent copy is retry-safe.
+function isTransientStorageFile(fileName) {
+  return TRANSIENT_READY_FILE.test(fileName) || TRANSIENT_ATOMIC_FILE.test(fileName) || TRANSIENT_OAUTH_FILE.test(fileName);
+}
 const ROOT_KINDS = new Map([
   ["backups", "backup"],
   ["jobs", "job"],
@@ -145,8 +155,9 @@ function recordLocation(root, path) {
   const kind = ROOT_KINDS.get(parts[rootIndex]);
   const remaining = parts.slice(rootIndex + 1);
   if (remaining.length < 1 || remaining.length > 2) throw new Error(`${relative(root, path)} is nested at an unsupported depth.`);
-  if (!path.toLowerCase().endsWith(".json")) throw new Error(`${relative(root, path)} is not an encrypted JSON record.`);
   const fileName = remaining.at(-1);
+  if (isTransientStorageFile(fileName)) return undefined;
+  if (!path.toLowerCase().endsWith(".json")) throw new Error(`${relative(root, path)} is not an encrypted JSON record.`);
   const id = basename(fileName, ".json");
   if (!RECORD_ID.test(id)) throw new Error(`${relative(root, path)} has a non-UUID record filename.`);
   const tenant = remaining.length === 2 ? remaining[0] : undefined;

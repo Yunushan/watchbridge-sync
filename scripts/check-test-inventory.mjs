@@ -20,7 +20,7 @@ if (files.length < minimumFiles) failures.push(`test inventory contains ${files.
 for (const area of requiredAreas) {
   if (!files.some((file) => file.startsWith(`${area}/`))) failures.push(`${area} has no test file.`);
 }
-for (const file of ["scripts/live-provider-dry-run.test.mjs", "scripts/verify-production-recovery-evidence.test.mjs", "scripts/verify-storage-snapshot.test.mjs", "scripts/verify-production-capacity-evidence.test.mjs", "scripts/verify-release-assets.test.mjs"]) {
+for (const file of ["scripts/live-provider-dry-run.test.mjs", "scripts/verify-production-recovery-evidence.test.mjs", "scripts/verify-storage-snapshot.test.mjs", "scripts/verify-production-capacity-evidence.test.mjs", "scripts/verify-release-assets.test.mjs", "scripts/check-github-governance.test.mjs"]) {
   if (!files.includes(file)) failures.push(`${file} is missing from the operational test inventory.`);
 }
 if (failures.length) {
