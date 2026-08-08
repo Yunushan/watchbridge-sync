@@ -46,6 +46,14 @@ test("verifies encrypted records and writes a non-secret manifest", async () => 
   assert.deepEqual(JSON.parse(verified), { schema: "watchbridge.storage-snapshot-manifest.v1", recordCount: 1, kinds: ["backup"], manifest });
 });
 
+test("ignores transient atomic-write files during a live snapshot copy", async () => {
+  const { root } = await snapshot();
+  await writeFile(join(root, "backups", `.watchbridge-ready-${randomUUID()}.tmp`), "probe");
+  await writeFile(join(root, "backups", `${randomUUID()}.json.${"a".repeat(16)}.tmp`), "partial");
+  const output = execFileSync(process.execPath, [verifier, root], { encoding: "utf8", env: { ...process.env, WATCHBRIDGE_STORAGE_KEY: key } });
+  assert.match(output, /verification passed: 1 record/);
+});
+
 test("rejects plaintext and tampered records", async () => {
   const { root, id } = await snapshot();
   const path = join(root, "backups", `${id}.json`);

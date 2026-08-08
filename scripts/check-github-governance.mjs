@@ -61,16 +61,17 @@ if (!repository || !/^[^/]+\/[^/]+$/.test(repository) || !token) {
       failures.push(
         `protected ${branch} must require branches to be up to date before merging`,
       );
+    const reviewPolicy = protection.required_pull_request_reviews;
     if (
-      protection.required_pull_request_reviews
-        ?.required_approving_review_count < 1
+      !reviewPolicy ||
+      !Number.isInteger(reviewPolicy.required_approving_review_count) ||
+      reviewPolicy.required_approving_review_count < 1
     )
       failures.push(
         `protected ${branch} must require at least one approving review`,
       );
     if (
-      protection.required_pull_request_reviews?.require_last_push_approval !==
-      true
+      !reviewPolicy || reviewPolicy.require_last_push_approval !== true
     )
       failures.push(
         `protected ${branch} must require approval after the last push`,

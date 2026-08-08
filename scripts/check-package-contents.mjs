@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 const packages = [
   { directory: 'apps/api', entrypoint: 'dist/server.js' },
@@ -6,6 +7,21 @@ const packages = [
   { directory: 'packages/connectors', entrypoint: 'dist/index.js' }
 ];
 const failures = [];
+
+try {
+  const packageManifest = JSON.parse(readFileSync('package.json', 'utf8'));
+  if (packageManifest.license !== '0BSD')
+    failures.push('root package.json must declare the 0BSD license.');
+  const licenseText = readFileSync('LICENSE', 'utf8');
+  if (
+    !licenseText.includes('Permission to use, copy, modify, and/or distribute this software') ||
+    !licenseText.includes('THE SOFTWARE IS PROVIDED "AS IS"')
+  ) {
+    failures.push('LICENSE must contain the 0BSD grant and warranty disclaimer.');
+  }
+} catch (error) {
+  failures.push(`license metadata check failed: ${error instanceof Error ? error.message : String(error)}`);
+}
 
 for (const { directory, entrypoint } of packages) {
   const packed = process.platform === 'win32'
@@ -36,5 +52,5 @@ if (failures.length) {
   console.error(['Package contents check failed:', ...failures.map((failure) => `- ${failure}`)].join('\n'));
   process.exitCode = 1;
 } else {
-  console.log('Package contents check passed.');
+  console.log('Package contents and license check passed.');
 }

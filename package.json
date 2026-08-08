@@ -9,7 +9,7 @@
     "dev": "pnpm --parallel --filter @watchbridge/api --filter @watchbridge/web dev",
     "build": "pnpm -r --sort build",
     "test": "pnpm -r test && pnpm test:operational && pnpm test:coverage",
-    "test:operational": "node --test scripts/live-provider-dry-run.test.mjs scripts/verify-production-recovery-evidence.test.mjs scripts/verify-storage-snapshot.test.mjs scripts/verify-production-capacity-evidence.test.mjs scripts/verify-release-assets.test.mjs",
+    "test:operational": "node --test scripts/live-provider-dry-run.test.mjs scripts/verify-production-recovery-evidence.test.mjs scripts/verify-storage-snapshot.test.mjs scripts/verify-production-capacity-evidence.test.mjs scripts/verify-release-assets.test.mjs scripts/check-github-governance.test.mjs",
     "test:coverage": "pnpm -r --if-present test:coverage",
     "verify:release-assets": "node scripts/verify-release-assets.mjs",
     "verify:storage-snapshot": "node scripts/verify-storage-snapshot.mjs",

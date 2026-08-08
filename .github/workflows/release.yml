@@ -31,8 +31,8 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # v5, pinned to an immutable commit.
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+      # v6.0.10, pinned to an immutable commit.
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
       # v5, pinned to an immutable commit.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -207,9 +207,9 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: node scripts/verify-release-assets.mjs release "$RELEASE_TAG"
-      # v3, pinned to an immutable commit.
+      # v4.1.1, pinned to an immutable commit.
       - name: Attest release archive provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: release/*.tar.gz
       # v4, pinned to an immutable commit.
