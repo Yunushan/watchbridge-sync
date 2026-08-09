@@ -36,10 +36,6 @@ export const SERVICE_CAPABILITIES: Record<ServiceId, ConnectorCapability> = {
     exportWatched: true,
     readWatchlist: true,
     exportWatchlist: true,
-    readReviews: true,
-    writeReviews: true,
-    importReviews: true,
-    exportReviews: true,
     apiAuth: 'none',
     integrationMode: 'official-export',
     notes: 'Shipped readers accept IMDb ratings, Check-ins, and watchlist exports. Check-ins become timestamp-free watched membership because their list creation time is not guaranteed to be the actual viewing time. The portable ratings CSV helper does not imply IMDb account import or a direct account writer.'
