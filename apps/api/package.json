@@ -19,7 +19,7 @@
     "@watchbridge/core": "workspace:*",
     "@watchbridge/connectors": "workspace:*",
     "@hono/node-server": "2.0.11",
-    "hono": "4.13.0"
+    "hono": "4.13.1"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "4.1.10",
